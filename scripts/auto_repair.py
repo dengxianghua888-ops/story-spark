@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from storyforge_lib import phase_for_role
+from storyforge_lib import phase_for_role, normalize_pipeline_mode
 
 from repairs import (
     repair_direct_submission,
@@ -45,6 +45,8 @@ PHASE_REPAIRS: Dict[int, List[Any]] = {
 def run_repair_pass(story: Path, phase: int, mode: str = "production") -> Dict[str, Any]:
     repairers = []
     for role, legacy_phase in [("scene", 5), ("critic", 6), ("final", 7), ("feedback", 8)]:
+        if role == "feedback" and normalize_pipeline_mode(mode) == "v4":
+            continue
         if phase == phase_for_role(mode, role):
             repairers = PHASE_REPAIRS[legacy_phase]
             break

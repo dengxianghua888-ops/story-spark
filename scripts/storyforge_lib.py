@@ -90,10 +90,12 @@ def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
-                                         prefix=f".{path.name}.", delete=False) as handle:
-            temporary = Path(handle.name)
+        temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+        if path.exists():
+            os.chmod(temporary, path.stat().st_mode & 0o7777)
         os.replace(temporary, path)
     finally:
         if temporary is not None:
@@ -218,8 +220,17 @@ class StagedStory:
         self.parent = Path(tempfile.mkdtemp(prefix=f".{story.name}.attempt-", dir=self.story.parent))
         self.path = self.parent / story.name
         self.published = False
+        self.diagnostics = [self.run_dir / f"phase{phase}.{suffix}" for suffix in
+                            ["runner.log", "validator.log", "rubric.log", "parse-report.json", "normalizer.log"]]
+        self.diagnostic_baseline = {p.name: self._diagnostic_version(p)
+                                    for p in self.diagnostics if p.is_file()}
         write_json(self.parent / "attempt.json", {"story": str(self.story), "phase": phase,
                    "tree": str(self.path), "status": "staging"})
+
+    @staticmethod
+    def _diagnostic_version(path):
+        stat = path.stat()
+        return (stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, path.read_bytes())
 
     def __enter__(self):
         if any(path.is_symlink() for path in self.story.rglob("*")):
@@ -264,8 +275,17 @@ class StagedStory:
         feedback = self.run_dir / "retry-feedback.json"
         try:
             if not self.published and self.path.exists():
+                diagnostics = []
+                for source in self.diagnostics:
+                    if source.is_file() and self._diagnostic_version(source) != self.diagnostic_baseline.get(source.name):
+                        destination = self.parent / "diagnostics" / source.name
+                        destination.parent.mkdir(exist_ok=True)
+                        shutil.copy2(source, destination)
+                        diagnostics.append(source.name)
                 write_json(feedback, {"status": "failed", "phase": self.phase,
-                                      "candidate": str(self.path)})
+                                      "candidate": str(self.path), "diagnostics": diagnostics,
+                                      "changed_files": [name for name, digest in story_fingerprint(self.path).items()
+                                                        if self.fingerprint.get(name) != digest]})
             elif self.published and feedback.exists():
                 previous = json.loads(feedback.read_text(encoding="utf-8"))
                 if self.phase >= previous.get("phase", self.phase):
@@ -295,12 +315,13 @@ def retry_feedback_prompt(story: Path, run_dir: Path) -> tuple[str, dict]:
     for name in ["quality-report.json", "review.md", "diff.md", "scene-rewrite-todo.json",
                  "source-rhythm-rewrite-todo.json", "scene-forbidden-scan.json", "repair-report.json"]:
         source = candidate / name
-        if source.is_file() and source.resolve().is_relative_to(candidate):
+        if name in feedback.get("changed_files", []) and source.is_file() and source.resolve().is_relative_to(candidate):
             parts.extend([f"### Failed attempt: {name}", source.read_text(encoding="utf-8")])
             included.append(name)
-    phase = int(feedback["phase"])
-    for suffix in ["validator.log", "rubric.log", "parse-report.json", "normalizer.log"]:
-        source = run_dir / f"phase{phase}.{suffix}"
+    for name in feedback.get("diagnostics", []):
+        source = candidate.parent / "diagnostics" / name
+        if Path(name).name != name:
+            raise ValueError("Invalid retry diagnostic name")
         if source.is_file():
             parts.extend([f"### Failure diagnostic: {source.name}", source.read_text(encoding="utf-8")])
             included.append(source.name)
@@ -395,6 +416,8 @@ def render_phase_prompt(story: Path, phase: int, root: Path | None = None, mode:
     root = root or repo_root()
     normalized = normalize_pipeline_mode(mode)
     bundle = load_phase_bundle(phase, root, normalized)
+    if phase == phase_for_role(normalized, "scene") and (story / "continuity-ledger.json").exists():
+        raise ValueError("Continuity ledger requires position-isolated prompts; use generate_scene_batches.py")
     parts = [
         f"# StoryForge {normalized} Phase {phase}: {bundle.title}",
         "",
@@ -425,7 +448,16 @@ def render_phase_prompt(story: Path, phase: int, root: Path | None = None, mode:
             parts.append(f"### {label}")
             parts.append("")
             if path.exists():
-                parts.append(read_text(path))
+                if path.name == "story.yaml":
+                    # Operational gate/run metadata is not model input.
+                    import yaml
+                    data = yaml.safe_load(read_text(path)) or {}
+                    if not isinstance(data, dict):
+                        raise ValueError("story.yaml must be a mapping")
+                    data.pop("automation", None)
+                    parts.append(yaml.safe_dump(data, allow_unicode=True, sort_keys=True))
+                else:
+                    parts.append(read_text(path))
             else:
                 parts.append(f"[MISSING INPUT: {path}]")
             parts.append("")

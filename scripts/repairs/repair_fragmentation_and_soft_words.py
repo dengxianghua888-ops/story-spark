@@ -269,9 +269,9 @@ def sanitize_card_value(value: object, fallback: str = "") -> object:
     return value
 
 
-def sanitize_scene_cards(cards_dir: Path) -> int:
+def sanitize_scene_cards(cards_dir: Path, *, card_paths: List[Path] | None = None) -> int:
     changed = 0
-    for card_path in sorted(cards_dir.glob("scene-*.json")):
+    for card_path in sorted(cards_dir.glob("scene-*.json")) if card_paths is None else card_paths:
         data = json.loads(card_path.read_text(encoding="utf-8"))
         fallback = str(data.get("chapter_end_hook") or "章尾信息继续推进。")
         before = json.dumps(data, ensure_ascii=False, sort_keys=True)
@@ -340,17 +340,42 @@ def scene_report(path: Path, card: Dict[str, int], before: str, after: str) -> D
     }
 
 
-def run(story: Path, mode: str = "production") -> Dict[str, object]:
+def run(story: Path, mode: str = "production", *, scene_ids: List[str] | None = None) -> Dict[str, object]:
+    """Repair all legacy scenes, or only explicitly selected unaccepted drafts.
+
+    Scoped repairs never rewrite other cards/scenes or assemble draft.md. The
+    caller owns final assembly after all expected scenes pass validation.
+    """
     cards_dir = story / "scene-cards"
     scenes_dir = story / "draft-scenes"
-    sanitized_cards = sanitize_scene_cards(cards_dir)
+    if scene_ids is None:
+        scene_paths = sorted(scenes_dir.glob("scene-*.md"))
+        card_paths = None
+    else:
+        if not scene_ids or len(set(scene_ids)) != len(scene_ids):
+            raise ValueError("scoped repair requires unique scene IDs")
+        scene_paths = []
+        card_paths = []
+        for sid in scene_ids:
+            if not re.fullmatch(r"scene-[0-9]+", sid):
+                raise ValueError("invalid scoped repair scene ID")
+            scene_path = scenes_dir / f"{sid}.md"
+            card_path = cards_dir / f"{sid}.json"
+            for path in (scene_path, card_path):
+                if not path.resolve().is_relative_to(story.resolve()) or not path.is_file():
+                    raise ValueError("scoped repair requires existing in-story files")
+            if json.loads(card_path.read_text(encoding="utf-8")).get("scene_id") != sid:
+                raise ValueError("scoped repair card ID mismatch")
+            scene_paths.append(scene_path)
+            card_paths.append(card_path)
+    sanitized_cards = sanitize_scene_cards(cards_dir, card_paths=card_paths)
     contract = source_line_contract(story)
     avg_min = contract["avg_min"]
     avg_max = contract["avg_max"]
     short_max = contract["short_line_max"]
     very_short_max = contract["very_short_max"]
     reports = []
-    for scene_path in sorted(scenes_dir.glob("scene-*.md")):
+    for scene_path in scene_paths:
         card_path = cards_dir / f"{scene_path.stem}.json"
         card = json.loads(card_path.read_text(encoding="utf-8")) if card_path.exists() else {}
         before = scene_path.read_text(encoding="utf-8")
@@ -371,10 +396,10 @@ def run(story: Path, mode: str = "production") -> Dict[str, object]:
         after = "\n\n".join(merged).strip() + "\n"
         scene_path.write_text(after, encoding="utf-8")
         reports.append(scene_report(scene_path, card, before, after))
-    scene_paths = sorted(scenes_dir.glob("scene-*.md"))
     question_rewrites = reduce_question_pressure_in_files(scene_paths, contract["question_per_k_max"])
-    draft = "\n\n".join(path.read_text(encoding="utf-8").strip() for path in scene_paths).strip() + "\n"
-    (story / "draft.md").write_text(draft, encoding="utf-8")
+    if scene_ids is None:
+        draft = "\n\n".join(path.read_text(encoding="utf-8").strip() for path in scene_paths).strip() + "\n"
+        (story / "draft.md").write_text(draft, encoding="utf-8")
     return {
         "name": "fragmentation_and_soft_words",
         "status": "ok",

@@ -151,6 +151,10 @@ def test_manual_prompt_pack_resumes_from_existing_output_bundle(tmp_path):
     write(story / "source.md", "这是一篇合成测试原文。")
     run_dir = story / "runs" / "manual_resume"
     fixture = ROOT / "tests" / "fixtures" / "mock-runs" / "phase1.bundle.txt"
+    # A manual bundle must answer a previously captured input snapshot.
+    first = run_storyforge("run", "--story", story, "--runner", "manual-prompt-pack",
+                          "--run-id", "manual_resume", "--max-retries", "0", "--no-human-gates")
+    assert first.returncode == 23
     write(run_dir / "phase1.model.out", fixture.read_text(encoding="utf-8"))
 
     result = run_storyforge(

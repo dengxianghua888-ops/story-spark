@@ -35,3 +35,61 @@ The unmodified baseline `fecccd16772ae7356182330b2b27f64a104ca106` had 58 passin
 The old Critic normalization test expected rejected output to be written live. It now checks the original published report is unchanged and the normalized failed candidate is retained for inspection. New tests cover V6 from-scratch nine-phase mock execution, failing Critic, stale-final selection, phase-8 replacement rubric failure, source-policy retention, unexpected source output, second-file write failure, unique retries/stale files, unsupported publication, external edits, concurrent writers, Darwin dispatch/error mapping and abrupt process exits immediately before/after exchange with fingerprint-based recovery.
 
 There is no packaging/build target or repository lint configuration. Full bytecode compilation is used as the build/syntax check. An explicit whole-tree Ruff E4/E7/E9/F scan reports 29 baseline findings and 26 remaining pre-existing findings after this change (mostly unused variables/imports and legacy test import placement); those unrelated files are not rewritten to mask the baseline. No model calls or paid services are used by these regressions.
+
+## Runner isolation follow-up (PR 1 review)
+
+The attempt is now created **before** prompt rendering or runner execution. The
+runner receives only the candidate story and isolated prompt/output paths. Its
+working directory is a retained `storyforge-runner-*` system-temporary directory
+outside the repository, preventing normal discovery of repository agent config.
+The manifest records that path, and logs are copied back to the run directory. A direct candidate artifact write is
+rejected even when the runner reports success: only parsed, whitelisted bundles
+can publish. Ordinary runner failures retain the candidate without publishing it. This protects
+artifact-path writes, subject to the provider limitations below.
+Dry runs render the planned prompt without copying the story or recording a failed
+attempt. Manual bundles already supplied in a run directory still resume normally.
+
+Provider behavior changes:
+
+- Codex uses `--sandbox read-only` instead of `--full-auto`, and
+  `--ignore-user-config` skips user `config.toml` while retaining normal auth.
+  See the [official CLI reference](https://developers.openai.com/codex/cli/reference/).
+  Custom model/provider settings in that file are no longer inherited; explicit
+  `--model` remains supported. Older CLIs that reject the flags fail closed.
+- Claude uses `--bare --tools "" --disallowedTools "mcp__*"` for text-in/text-out,
+  without auto-loaded customization or model tools. See the
+  [official CLI reference](https://code.claude.com/docs/en/cli-reference).
+- OpenClaw retains its existing `agent --local` entry point and fallback behavior,
+  but runs from the isolated attempt working directory. **It has no verified
+  read-only filesystem boundary**: cwd isolation and staged input paths do not
+  prevent a model tool from targeting a known absolute live path. The
+  [official tool-permission guidance](https://docs.openclaw.ai/gateway/security/tool-permissions)
+  requires host-specific configuration that this patch does not change.
+  Disabling this provider is deferred pending owner acceptance; this patch does
+  not claim to close unrestricted OpenClaw tool writes. Use the manual prompt
+  pack when a verified provider boundary is unavailable.
+
+These are invocation contracts, not an independently verified security boundary
+against malicious host executables. Codex's read-only sandbox governs local
+model-generated commands, not arbitrary external MCP services. User config is
+skipped and the cwd is outside the repository, but managed integrations, temporary
+directory ancestor configuration, and host policy must still be trusted;
+this patch does not prove that every possible external tool is unable to mutate a
+live story. Candidate cwd alone is not OS isolation. Tests use fake runners and
+inspect exact argv; no real provider/model, account, or user computer was used.
+
+Automation metadata is written to the candidate before exchange. After the commit
+point, audit/summary write failures print a warning instead of reporting a failed
+phase. Existing file modes survive atomic replacement; newly created files follow
+the process umask. Retry feedback includes only changed candidate artifacts and
+attempt-specific diagnostic snapshots, never inherited approved reports or later
+logs. V4 early repair passes have no feedback role and remain valid empty passes.
+
+
+Manual prompt-pack instructions point at the canonical run directory rather than
+an expiring attempt workspace. Saving the requested response there and resuming
+works both for the direct manual runner and the agent's manual fallback. A
+successful manual fallback now propagates success. Rewritten diagnostic files
+are recognized by inode and nanosecond modification/change metadata plus content,
+so identical failures from consecutive attempts remain visible while untouched
+older diagnostics are excluded.

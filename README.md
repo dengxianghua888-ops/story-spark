@@ -340,3 +340,17 @@ python3 scripts/corpus-health.py
 ## License / 原文版权
 
 `corpus/` 与 `stories/` 下的 source.md 为第三方爆款原文,仅作仿写学习 few-shot 参考,**不得分发**。`.gitignore` 已默认排除这些原文文件。
+
+### Optional scene continuity evidence
+
+The split scene writer can use a human-maintained, position-scoped fact ledger.
+Plans and candidates are kept separate from reviewed earlier facts; source
+revisions invalidate affected context. See [scope, format and limitations](docs/scene-continuity.md).
+This opt-in pilot is tested with synthetic counterexamples, not a claim of
+improved literary quality.
+
+### 审批快照与安全续跑
+
+蓝图审批现在绑定候选内容、上游输入、提示词、校验规则和模型配置；变更后需要明确重审。
+`--resume` 仅复用输入一致、产物指纹一致且重新校验通过的阶段，旧 `approved` 不会自动升级为历史审批。
+分场入口也支持 `--approval-run-id`。操作示例与兼容边界见 [审批快照说明](docs/approval-snapshots.md)。

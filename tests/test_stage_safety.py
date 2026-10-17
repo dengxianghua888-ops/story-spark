@@ -27,15 +27,22 @@ def tree_bytes(story):
             if p.is_file() and "runs" not in p.relative_to(story).parts}
 
 
-def test_gate_approval_preserves_source_policy_and_automation(tmp_path):
+def test_gate_approval_preserves_source_policy_and_automation(tmp_path, monkeypatch):
     story = tmp_path / "story"
     write(story / "source.md", "private source")
     original = {"slug": "story", "source_policy": {"access": "denied", "notes": "owner only"},
                 "automation": {"runner": "agent", "current_phase": 3, "custom": "keep",
                                "human_gates": {"another_gate": "pending"}}}
     write(story / "story.yaml", yaml.safe_dump(original))
-    result = run_storyforge("approve-gate", "--story", story, "--gate", "phase2_blueprint_review")
-    assert result.returncode == 0
+    import argparse
+    import subprocess
+    from approval_snapshots import configuration
+    write(story / "blueprint.md", "reviewed blueprint")
+    write(story / "adaptation.md", "reviewed adaptation")
+    run_args = storyforge.build_parser().parse_args(["run", "--story", str(story)])
+    lib.write_json(story / "runs/r/blueprint-pending.json", {"configuration": configuration(run_args)})
+    monkeypatch.setattr(storyforge, "validate_phase", lambda *a, **kw: subprocess.CompletedProcess([], 0))
+    assert storyforge.approve_gate(argparse.Namespace(story=str(story), run_id="r", gate="phase2_blueprint_review")) == 0
     after = yaml.safe_load((story / "story.yaml").read_text())
     assert after["source_policy"] == original["source_policy"]
     assert after["automation"] == original["automation"] | {"human_gates": {
@@ -331,3 +338,201 @@ def test_approval_does_not_race_pipeline_lock(tmp_path):
     assert result.returncode == 23
     assert "active writer" in result.stderr
     assert "automation" not in (story / "story.yaml").read_text()
+
+
+def phase_harness(tmp_path, monkeypatch, runner):
+    from types import SimpleNamespace
+    story = tmp_path / "story"
+    run = story / "runs/r"
+    run.mkdir(parents=True)
+    write(story / "draft.md", "APPROVED")
+    args = SimpleNamespace(mode="v4", dry_run=False, runner="mock", model="",
+                           heartbeat_seconds=0, run_id="r", no_human_gates=True)
+    monkeypatch.setattr(storyforge, "render_phase_prompt", lambda target, *a: (f"Story: {target}", {}))
+    monkeypatch.setattr(storyforge, "load_phase_bundle", lambda *a: SimpleNamespace(role="scene"))
+    monkeypatch.setattr(storyforge, "run_command_with_heartbeat", runner)
+    return args, story, run
+
+
+@pytest.mark.parametrize("runner_success", [False, True])
+def test_runner_direct_writes_never_touch_live_or_publish(tmp_path, monkeypatch, runner_success):
+    import subprocess
+    seen = {}
+    def runner(cmd, *a, **kw):
+        target = Path(cmd[cmd.index("--story") + 1])
+        prompt = Path(cmd[cmd.index("--prompt") + 1])
+        output = Path(cmd[cmd.index("--run-dir") + 1]) / "phase3.model.out"
+        seen.update(target=target, cwd=kw["cwd"], runner_dir=output.parent, prompt=prompt.read_text())
+        write(target / "draft.md", "RUNNER_BAD")
+        write(output, "bad bundle")
+        return subprocess.CompletedProcess(cmd, 0 if runner_success else 1,
+            json.dumps({"status": "success" if runner_success else "failed", "output_bundle": str(output)}), ""), {}
+    args, story, run = phase_harness(tmp_path, monkeypatch, runner)
+    before = tree_bytes(story)
+    assert not storyforge.run_phase(args, story, run, run / "summary.md", 3, 0)
+    assert tree_bytes(story) == before
+    assert seen["target"] != story and seen["cwd"] == seen["runner_dir"]
+    assert not seen["cwd"].is_relative_to(story.parent)
+    assert str(story) not in seen["prompt"]
+    assert (seen["target"] / "draft.md").read_text() == "RUNNER_BAD"
+
+
+def successful_phase_harness(tmp_path, monkeypatch):
+    import subprocess
+    def runner(cmd, *a, **kw):
+        output = Path(cmd[cmd.index("--run-dir") + 1]) / "phase3.model.out"
+        write(output, block({"draft.md": "NEW"}))
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"status": "success", "output_bundle": str(output)}), ""), {}
+    args, story, run = phase_harness(tmp_path, monkeypatch, runner)
+    def apply(target, *a, **kw):
+        write(target / "draft.md", "NEW")
+        return {"written": ["draft.md"]}
+    monkeypatch.setattr(storyforge, "apply_artifact_bundle", apply)
+    monkeypatch.setattr(storyforge, "validate_phase", lambda *a, **kw: subprocess.CompletedProcess([], 0, "", ""))
+    return args, story, run
+
+
+def test_metadata_failure_before_commit_preserves_live(tmp_path, monkeypatch):
+    args, story, run = successful_phase_harness(tmp_path, monkeypatch)
+    before = tree_bytes(story)
+    def fail(*a, **kw):
+        raise OSError("metadata disk full")
+    monkeypatch.setattr(storyforge, "update_story_automation", fail)
+    with pytest.raises(OSError, match="metadata disk full"):
+        storyforge.run_phase(args, story, run, run / "summary.md", 3, 0)
+    assert tree_bytes(story) == before
+
+
+@pytest.mark.parametrize("failing_audit", ["append_summary", "update_manifest"])
+def test_postcommit_audit_failure_does_not_report_phase_failure(tmp_path, monkeypatch, failing_audit):
+    args, story, run = successful_phase_harness(tmp_path, monkeypatch)
+    original = getattr(storyforge, failing_audit)
+    def fail_after_commit(*a, **kw):
+        if (story / "draft.md").read_text() == "NEW":
+            raise OSError("audit disk full")
+        return original(*a, **kw)
+    monkeypatch.setattr(storyforge, failing_audit, fail_after_commit)
+    assert storyforge.run_phase(args, story, run, run / "summary.md", 3, 0)
+    assert (story / "draft.md").read_text() == "NEW"
+    assert yaml.safe_load((story / "story.yaml").read_text())["automation"]["current_phase"] == 3
+
+
+def test_atomic_write_preserves_existing_modes_and_new_umask(tmp_path):
+    import os
+    path = tmp_path / "artifact.md"
+    path.write_text("old")
+    path.chmod(0o640)
+    lib.write_text(path, "new")
+    assert path.stat().st_mode & 0o777 == 0o640
+    previous = os.umask(0o027)
+    try:
+        lib.write_text(tmp_path / "new.md", "new")
+    finally:
+        os.umask(previous)
+    assert (tmp_path / "new.md").stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.parametrize("phase", [1, 2])
+def test_v4_early_phase_repair_has_no_missing_role(tmp_path, phase):
+    from auto_repair import run_repair_pass
+    assert run_repair_pass(tmp_path, phase, "v4")["results"] == []
+
+
+def test_retry_omits_unchanged_approved_feedback(tmp_path):
+    story = tmp_path / "story"
+    run = story / "runs/r"
+    write(story / "review.md", "OLD_APPROVED_REVIEW")
+    write(story / "quality-report.json", '{"approved": true}')
+    with lib.StagedStory(story, run, 7) as staged:
+        write(staged.path / "diff.md", "NEW_FAILED_DIFF")
+    prompt, manifest = lib.retry_feedback_prompt(story, run)
+    assert "OLD_APPROVED_REVIEW" not in prompt
+    assert '"approved": true' not in prompt
+    assert "NEW_FAILED_DIFF" in prompt
+    assert manifest["included"] == ["diff.md"]
+
+
+def test_provider_readonly_arguments_and_openclaw_compatibility(tmp_path, monkeypatch):
+    import importlib.util
+    import subprocess
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location("agent_runner", ROOT / "scripts/runners/agent-runner.py")
+    agent = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(agent)
+    monkeypatch.setattr(agent.shutil, "which", lambda name: "/fake/" + name)
+    calls = []
+    def fake(cmd, **kw):
+        calls.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, "bundle", "")
+    monkeypatch.setattr(agent, "run", fake)
+    args = SimpleNamespace(story=str(tmp_path), run_dir=str(tmp_path), phase=1, model="")
+    agent.run_codex(args, "prompt", tmp_path / "bundle")
+    cmd, kw = calls[-1]
+    assert "--ignore-user-config" in cmd
+    assert "--full-auto" not in cmd
+    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+    assert cmd[cmd.index("--cd") + 1] == str(tmp_path)
+    assert kw["cwd"] == tmp_path
+    agent.run_claude(args, "prompt", tmp_path / "bundle")
+    cmd, kw = calls[-1]
+    assert "--bare" in cmd and cmd[cmd.index("--tools") + 1] == ""
+    assert cmd[cmd.index("--disallowedTools") + 1] == "mcp__*"
+    count = len(calls)
+    ok, data, _ = agent.run_openclaw(args, "prompt", tmp_path / "bundle")
+    assert ok and data["status"] == "success"
+    assert len(calls) == count + 1
+    cmd, kw = calls[-1]
+    assert cmd[:3] == ["openclaw", "agent", "--local"]
+    assert kw["cwd"] == tmp_path
+
+
+def test_retry_diagnostics_are_attempt_scoped(tmp_path):
+    story = tmp_path / "story"
+    run = story / "runs/r"
+    write(story / "draft.md", "approved")
+    write(run / "phase7.validator.log", "OLD_VALIDATOR")
+    with lib.StagedStory(story, run, 7):
+        write(run / "phase7.parse-report.json", "CURRENT_PARSE_FAILURE")
+    write(run / "phase7.parse-report.json", "LATER_DIFFERENT_FAILURE")
+    prompt, _ = lib.retry_feedback_prompt(story, run)
+    assert "CURRENT_PARSE_FAILURE" in prompt
+    assert "OLD_VALIDATOR" not in prompt
+    assert "LATER_DIFFERENT_FAILURE" not in prompt
+
+
+def test_dry_run_does_not_stage_or_mark_retry_failed(tmp_path, monkeypatch):
+    args, story, run = phase_harness(tmp_path, monkeypatch, lambda *a, **kw: pytest.fail("runner called"))
+    args.dry_run = True
+    assert storyforge.run_phase(args, story, run, run / "summary.md", 3, 0)
+    assert not list(tmp_path.glob(".story.attempt-*"))
+    assert not (run / "retry-feedback.json").exists()
+
+
+def test_identical_rewritten_failure_is_current_attempt_diagnostic(tmp_path):
+    story = tmp_path / "story"
+    run = story / "runs/r"
+    write(story / "draft.md", "approved")
+    for _ in range(2):
+        with lib.StagedStory(story, run, 3):
+            lib.write_text(run / "phase3.validator.log", "SAME_VALIDATOR_FAILURE")
+        prompt, manifest = lib.retry_feedback_prompt(story, run)
+        assert "SAME_VALIDATOR_FAILURE" in prompt
+        assert "phase3.validator.log" in manifest["included"]
+
+
+@pytest.mark.parametrize("runner_name", ["manual-prompt-pack", "agent"])
+def test_manual_pack_instructions_resume_from_canonical_bundle(tmp_path, monkeypatch, runner_name):
+    import subprocess
+    def runner(cmd, *a, **kw):
+        return subprocess.run(cmd, cwd=kw["cwd"], text=True, capture_output=True), {}
+    args, story, run = phase_harness(tmp_path, monkeypatch, runner)
+    args.runner = runner_name
+    monkeypatch.setenv("STORYFORGE_AGENT_PROVIDER_PHASE_3", "manual-prompt-pack")
+    assert not storyforge.run_phase(args, story, run, run / "summary.md", 3, 0)
+    todo = (run / "manual-prompt-pack/phase3.todo.md").read_text()
+    assert f"Save the response as `{run / 'phase3.model.out'}`" in todo
+    assert "storyforge-runner-" not in todo
+    write(run / "phase3.model.out", block({"draft.md": "MANUAL_NEW"}))
+    monkeypatch.setattr(storyforge, "validate_phase", lambda *a, **kw: subprocess.CompletedProcess([], 0, "", ""))
+    assert storyforge.run_phase(args, story, run, run / "summary.md", 3, 1)
+    assert (story / "draft.md").read_text().strip() == "MANUAL_NEW"

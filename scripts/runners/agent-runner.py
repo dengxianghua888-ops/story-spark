@@ -17,8 +17,8 @@ from typing import Dict, List, Tuple
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(args: List[str], prompt: str | None = None, timeout: int = 1800) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, cwd=ROOT, input=prompt, text=True, capture_output=True, timeout=timeout)
+def run(args: List[str], prompt: str | None = None, timeout: int = 1800, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd or Path.cwd(), input=prompt, text=True, capture_output=True, timeout=timeout)
 
 
 def append_provider_sentinel(run_dir: Path, phase: int, provider: str, status: str, **extra: object) -> None:
@@ -104,7 +104,8 @@ def run_manual_pack(args: argparse.Namespace, output_bundle: Path) -> Tuple[bool
     except (IndexError, json.JSONDecodeError):
         data = result(args.phase, "agent", "manual-prompt-pack", "failed", completed.returncode, "manual-prompt-pack", time.time(), output_bundle, "manual pack failed")
     data["runner"] = "agent"
-    return False, data, completed.stdout + completed.stderr
+    ok = completed.returncode == 0 and data.get("status") == "success"
+    return ok, data, completed.stdout + completed.stderr
 
 
 def run_codex(args: argparse.Namespace, prompt: str, output_bundle: Path) -> Tuple[bool, Dict[str, object], str]:
@@ -116,9 +117,11 @@ def run_codex(args: argparse.Namespace, prompt: str, output_bundle: Path) -> Tup
     cmd = [
         "codex",
         "exec",
-        "--full-auto",
+        "--sandbox",
+        "read-only",
+        "--ignore-user-config",
         "--cd",
-        str(ROOT),
+        str(Path(args.run_dir).resolve()),
         "--skip-git-repo-check",
         "--output-last-message",
         str(last_message),
@@ -131,7 +134,7 @@ def run_codex(args: argparse.Namespace, prompt: str, output_bundle: Path) -> Tup
     if reasoning_effort:
         codex_options.extend(["-c", f"model_reasoning_effort={json.dumps(reasoning_effort)}"])
     cmd[2:2] = codex_options
-    completed = run(cmd, prompt=prompt)
+    completed = run(cmd, prompt=prompt, cwd=Path(args.run_dir).resolve())
     text = last_message.read_text(encoding="utf-8") if last_message.exists() else completed.stdout
     output_bundle.write_text(text, encoding="utf-8")
     ok = completed.returncode == 0 and output_bundle.read_text(encoding="utf-8").strip()
@@ -154,10 +157,11 @@ def run_claude(args: argparse.Namespace, prompt: str, output_bundle: Path) -> Tu
     if not shutil.which("claude"):
         data = result(args.phase, "agent", "claude", "failed", 127, "claude -p", started, output_bundle, "claude CLI not found")
         return False, data, ""
-    cmd = ["claude", "-p", "--output-format", "text"]
+    cmd = ["claude", "--bare", "-p", "--output-format", "text",
+           "--tools", "", "--disallowedTools", "mcp__*"]
     if args.model:
         cmd.extend(["--model", args.model])
-    completed = run(cmd, prompt=prompt)
+    completed = run(cmd, prompt=prompt, cwd=Path(args.run_dir).resolve())
     output_bundle.write_text(completed.stdout, encoding="utf-8")
     ok = completed.returncode == 0 and completed.stdout.strip()
     data = result(
@@ -180,7 +184,7 @@ def run_openclaw(args: argparse.Namespace, prompt: str, output_bundle: Path) -> 
         data = result(args.phase, "agent", "openclaw", "failed", 127, "openclaw agent", started, output_bundle, "openclaw CLI not found")
         return False, data, ""
     cmd = ["openclaw", "agent", "--local", "--json", "--timeout", "1800", "--message", prompt]
-    completed = run(cmd)
+    completed = run(cmd, cwd=Path(args.run_dir).resolve())
     text = completed.stdout
     try:
         payload = json.loads(completed.stdout)
@@ -203,12 +207,7 @@ def run_openclaw(args: argparse.Namespace, prompt: str, output_bundle: Path) -> 
     return ok, data, completed.stdout + completed.stderr
 
 
-PROVIDERS = {
-    "codex": run_codex,
-    "openclaw": run_openclaw,
-    "claude": run_claude,
-}
-
+PROVIDERS = {"codex": run_codex, "openclaw": run_openclaw, "claude": run_claude}
 
 def provider_list(value: str, phase: int) -> List[str]:
     raw = value

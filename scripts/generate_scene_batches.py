@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from rhythm_metrics import rhythm_profile  # noqa: E402
+from scene_context import LEDGER, context_for_batch, scene_order  # noqa: E402
 from storyforge_lib import now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
 from repairs import repair_fragmentation_and_soft_words  # noqa: E402
 
@@ -58,7 +59,8 @@ def relative(path: Path) -> str:
     return str(path.relative_to(ROOT))
 
 
-def prompt_for_batch(story: Path, batch: List[Path], batch_index: int, batch_total: int) -> str:
+def prompt_for_batch(story: Path, batch: List[Path], batch_index: int, batch_total: int, *, context_max_chars: int = 16000) -> str:
+    continuity = context_for_batch(story, batch, max_chars=context_max_chars)
     scene_contract = (ROOT / "prompts" / "production" / "scene-writer.md").read_text(encoding="utf-8")
     style_dna = (story / "analysis" / "style-dna.md").read_text(encoding="utf-8")
     bible = load_json(story / "beat-bible.json")
@@ -140,12 +142,15 @@ def prompt_for_batch(story: Path, batch: List[Path], batch_index: int, batch_tot
                     "title": bible.get("title"),
                     "genre": bible.get("genre"),
                     "target_length": target_length,
-                    "chapters": chapters,
-                    "mechanisms": bible.get("mechanisms", []),
+                    "chapters": [] if (story / LEDGER).exists() else chapters,
+                    "mechanisms": [] if (story / LEDGER).exists() else bible.get("mechanisms", []),
                 },
                 ensure_ascii=False,
                 indent=2,
             ),
+            "",
+            "## Position-scoped Continuity (plans are not facts)",
+            continuity,
             "",
             "## Current Batch Scene Cards",
             "",
@@ -189,6 +194,7 @@ def repair_prompt_for_batch(
     failures: List[str],
     previous_text: str,
     attempt: int,
+    *, context_max_chars: int = 16000,
 ) -> str:
     cards = []
     source_profile = rhythm_profile((story / "source.md").read_text(encoding="utf-8"))
@@ -240,6 +246,9 @@ def repair_prompt_for_batch(
             "## Style DNA",
             "",
             style_dna,
+            "",
+            "## Position-scoped Continuity (failed draft is not accepted evidence)",
+            context_for_batch(story, batch, max_chars=context_max_chars),
             "",
             "## Previous Failed Draft",
             "",
@@ -401,10 +410,26 @@ def assemble_draft(story: Path, scene_cards: List[Path]) -> Dict[str, Any]:
     }
 
 
+def check_blueprint_approval(story, args):
+    """The split-scene entry point must honor the same reviewed blueprint."""
+    if args.no_human_gates:
+        return
+    from approval_snapshots import require_approval
+    if not args.approval_run_id or Path(args.approval_run_id).name != args.approval_run_id:
+        raise ValueError("Use --approval-run-id for the explicitly approved pipeline run")
+    approval_dir = story / "runs" / args.approval_run_id
+    pending = load_json(approval_dir / "blueprint-pending.json")
+    config = dict(pending["configuration"])
+    config.update(runner="codex", model=args.model, effort=args.effort)
+    require_approval(story, approval_dir, ROOT, argparse.Namespace(**config))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--story", required=True)
     parser.add_argument("--run-id", default="")
+    parser.add_argument("--approval-run-id", default="", help="pipeline run holding the reviewed blueprint snapshot")
+    parser.add_argument("--no-human-gates", action="store_true", help="explicitly bypass blueprint review")
     parser.add_argument("--batch-size", type=int, default=3)
     parser.add_argument("--model", default="gpt-5.4")
     parser.add_argument("--effort", default=os.environ.get("STORYFORGE_CODEX_REASONING_EFFORT", "medium"))
@@ -412,15 +437,17 @@ def main() -> int:
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--start-at", type=int, default=1, help="first scene number to generate")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--context-max-chars", type=int, default=16000, help="ledger context character budget (not model tokens)")
     args = parser.parse_args()
 
     story = Path(args.story)
     if not story.is_absolute():
         story = ROOT / story
     story = story.resolve()
+    check_blueprint_approval(story, args)
     if not (story / "beat-bible.json").exists():
         raise SystemExit("missing beat-bible.json; run phase 4 first")
-    all_scene_cards = sorted((story / "scene-cards").glob("scene-*.json"))
+    all_scene_cards = [story / "scene-cards" / f"{sid}.json" for sid in scene_order(story)]
     if not all_scene_cards:
         raise SystemExit("missing scene-cards")
     scene_cards = [
@@ -429,6 +456,8 @@ def main() -> int:
     ]
     if not scene_cards:
         raise SystemExit(f"no scene cards at or after scene {args.start_at}")
+    if (story / LEDGER).exists() and args.force and args.start_at <= 1:
+        raise SystemExit("--force would erase continuity evidence; retain reviewed drafts and regenerate selected scenes")
     if (story / "draft-scenes").exists() and args.force and args.start_at <= 1:
         shutil.rmtree(story / "draft-scenes")
     (story / "draft-scenes").mkdir(parents=True, exist_ok=True)
@@ -446,11 +475,16 @@ def main() -> int:
         "started_at": now_stamp(),
         "batches": [],
     }
-    card_batches = list(chunks(scene_cards, max(1, args.batch_size)))
+    effective_batch_size = 1 if (story / LEDGER).exists() else max(1, args.batch_size)
+    manifest["effective_batch_size"] = effective_batch_size
+    card_batches = list(chunks(scene_cards, effective_batch_size))
     for index, batch in enumerate(card_batches, start=1):
         cards = [load_json(path) for path in batch]
         expected = [f"draft-scenes/{card['scene_id']}.md" for card in cards]
-        prompt = prompt_for_batch(story, batch, index, len(card_batches))
+        prompt = prompt_for_batch(story, batch, index, len(card_batches), context_max_chars=args.context_max_chars)
+        if (story / LEDGER).exists():
+            snapshot = json.loads(context_for_batch(story, batch, max_chars=args.context_max_chars))
+            write_json(run_dir / "scene-context" / f"{cards[0]['scene_id']}.json", snapshot)
         prompt_path = run_dir / f"batch{index:02d}.prompt.md"
         out_path = run_dir / f"batch{index:02d}.codex.out"
         log_path = run_dir / f"batch{index:02d}.codex.log"
@@ -469,6 +503,7 @@ def main() -> int:
             attempt_out_path = run_dir / f"batch{index:02d}{suffix}.codex.out"
             attempt_log_path = run_dir / f"batch{index:02d}{suffix}.codex.log"
             write_text(attempt_prompt_path, current_prompt)
+            check_blueprint_approval(story, args)
             completed = run_codex(current_prompt, attempt_out_path, args.model, args.effort, args.timeout)
             attempt_log_path.write_text((completed.stdout or "") + (completed.stderr or ""), encoding="utf-8")
             bundle_text = attempt_out_path.read_text(encoding="utf-8") if attempt_out_path.exists() else completed.stdout
@@ -485,7 +520,10 @@ def main() -> int:
                 written = []
                 scene_failures = [f"artifact_parse: {exc}"]
             else:
-                repair_fragmentation_and_soft_words.run(story)
+                if (story / LEDGER).exists():
+                    repair_fragmentation_and_soft_words.run(story, scene_ids=[card["scene_id"] for card in cards])
+                else:
+                    repair_fragmentation_and_soft_words.run(story)
                 scene_failures = validate_scene_batch(story, batch, written)
             batch_report.setdefault("attempts", []).append(
                 {
@@ -502,7 +540,7 @@ def main() -> int:
                 current_text = "\n\n".join((story / rel).read_text(encoding="utf-8") for rel in expected)
             else:
                 current_text = bundle_text
-            current_prompt = repair_prompt_for_batch(story, batch, expected, scene_failures, current_text, attempt + 1)
+            current_prompt = repair_prompt_for_batch(story, batch, expected, scene_failures, current_text, attempt + 1, context_max_chars=args.context_max_chars)
         if scene_failures:
             batch_report["status"] = "failed_validation"
             batch_report["failures"] = scene_failures
