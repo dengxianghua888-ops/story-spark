@@ -250,7 +250,8 @@ def test_generation_retry_repair_then_next_scene_keeps_accepted_history(story, m
 
     import generate_scene_batches as batches
 
-    original = '阿青轻轻拿着钥匙。\n“你会归还信件吗？”\n'
+    # Resumed prefixes must satisfy the complete-draft gate as well.
+    original = '阿青轻轻拿着钥匙。\n' + '她把那封信收进抽屉，转身关上窗。\n' * 7
     write(story / "draft-scenes/scene-01.md", original)
     data = ledger(story)
     data["entries"] = [data["entries"][0]]
