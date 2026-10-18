@@ -348,6 +348,9 @@ def normalize_story(story: Path, phase: int, mode: str, runner: str = "", provid
         changes.extend(normalize_phase3(story))
     elif phase == phase_for_role(mode, "beat"):
         changes.extend(normalize_phase4(story))
+        from repairs.repair_fragmentation_and_soft_words import sanitize_scene_cards
+        if sanitize_scene_cards(story / "scene-cards"):
+            changes.append("phase4_sanitized_scene_cards")
     elif phase == phase_for_role(mode, "critic"):
         changes.extend(update_quality_report_metrics(story, phase, mode))
     elif phase == phase_for_role(mode, "final"):

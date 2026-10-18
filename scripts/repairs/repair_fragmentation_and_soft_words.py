@@ -263,7 +263,7 @@ def sanitize_card_value(value: object, fallback: str = "") -> object:
         return value
     if isinstance(value, list):
         cleaned = [sanitize_card_value(item, fallback) for item in value]
-        return [item for item in cleaned if item not in {"", None}]
+        return [item for item in cleaned if item != "" and item is not None]
     if isinstance(value, dict):
         return {key: sanitize_card_value(item, fallback) for key, item in value.items()}
     return value
@@ -368,7 +368,9 @@ def run(story: Path, mode: str = "production", *, scene_ids: List[str] | None = 
                 raise ValueError("scoped repair card ID mismatch")
             scene_paths.append(scene_path)
             card_paths.append(card_path)
-    sanitized_cards = sanitize_scene_cards(cards_dir, card_paths=card_paths)
+    # Scene cards are reviewed inputs. Prose repair must never invalidate the
+    # blueprint approval; normalization belongs to the pre-review beat phase.
+    sanitized_cards = 0
     contract = source_line_contract(story)
     avg_min = contract["avg_min"]
     avg_max = contract["avg_max"]

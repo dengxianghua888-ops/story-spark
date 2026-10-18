@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from rhythm_metrics import rhythm_profile  # noqa: E402
 from scene_context import LEDGER, context_for_batch, scene_order  # noqa: E402
-from storyforge_lib import now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
+from storyforge_lib import StagedStory, story_write_lock, now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
 from repairs import repair_fragmentation_and_soft_words  # noqa: E402
 
 
@@ -56,7 +56,7 @@ def chunks(items: List[Path], size: int) -> Iterable[List[Path]]:
 
 
 def relative(path: Path) -> str:
-    return str(path.relative_to(ROOT))
+    return os.path.relpath(path, ROOT)
 
 
 def prompt_for_batch(story: Path, batch: List[Path], batch_index: int, batch_total: int, *, context_max_chars: int = 16000) -> str:
@@ -444,6 +444,41 @@ def main() -> int:
     if not story.is_absolute():
         story = ROOT / story
     story = story.resolve()
+    if args.run_id and (Path(args.run_id).name != args.run_id or args.run_id in {".", ".."}):
+        raise ValueError("run ID must be a single directory name")
+    run_id = args.run_id or f"scene_batches_{now_stamp().replace(' ', '_').replace(':', '')}"
+    run_dir = story / "runs" / run_id
+    # Own the same stable lock as the main pipeline, including approval checks.
+    with story_write_lock(story):
+        check_blueprint_approval(story, args)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with StagedStory(story, run_dir, 5) as staged:
+            write_json(run_dir / "split-scene-report.json", {
+                "run_id": run_id, "status": "staging", "candidate": str(staged.path),
+                "started_at": now_stamp(), "batches": [],
+            })
+            try:
+                manifest = generate_candidate(staged.path, story, run_dir, run_id, args)
+                check_blueprint_approval(story, args)
+                check_blueprint_approval(staged.path, args)
+                manifest["status"] = "validated"
+                manifest["attempt_backup"] = str(staged.path)
+                write_json(run_dir / "split-scene-report.json", manifest)
+                staged.publish()
+            except (OSError, ValueError, subprocess.SubprocessError, SystemExit) as exc:
+                report_path = run_dir / "split-scene-report.json"
+                report = load_json(report_path) if report_path.exists() else {"run_id": run_id}
+                report.update(status="failed", error=str(exc), candidate=str(staged.path), ended_at=now_stamp())
+                write_json(report_path, report)
+                raise
+        manifest.update(status="success", ended_at=now_stamp())
+        write_json(run_dir / "split-scene-report.json", manifest)
+        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+    return 0
+
+
+def generate_candidate(story, live_story, run_dir, run_id, args):
+    """Generate and validate the whole replacement without mutating live artifacts."""
     check_blueprint_approval(story, args)
     if not (story / "beat-bible.json").exists():
         raise SystemExit("missing beat-bible.json; run phase 4 first")
@@ -462,12 +497,8 @@ def main() -> int:
         shutil.rmtree(story / "draft-scenes")
     (story / "draft-scenes").mkdir(parents=True, exist_ok=True)
 
-    run_id = args.run_id or f"scene_batches_{now_stamp().replace(' ', '_').replace(':', '')}"
-    run_dir = story / "runs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-
     manifest: Dict[str, Any] = {
-        "story": relative(story),
+        "story": relative(live_story),
         "run_id": run_id,
         "model": args.model,
         "effort": args.effort,
@@ -503,6 +534,7 @@ def main() -> int:
             attempt_out_path = run_dir / f"batch{index:02d}{suffix}.codex.out"
             attempt_log_path = run_dir / f"batch{index:02d}{suffix}.codex.log"
             write_text(attempt_prompt_path, current_prompt)
+            check_blueprint_approval(live_story, args)
             check_blueprint_approval(story, args)
             completed = run_codex(current_prompt, attempt_out_path, args.model, args.effort, args.timeout)
             attempt_log_path.write_text((completed.stdout or "") + (completed.stderr or ""), encoding="utf-8")
@@ -520,10 +552,7 @@ def main() -> int:
                 written = []
                 scene_failures = [f"artifact_parse: {exc}"]
             else:
-                if (story / LEDGER).exists():
-                    repair_fragmentation_and_soft_words.run(story, scene_ids=[card["scene_id"] for card in cards])
-                else:
-                    repair_fragmentation_and_soft_words.run(story)
+                repair_fragmentation_and_soft_words.run(story, scene_ids=[card["scene_id"] for card in cards])
                 scene_failures = validate_scene_batch(story, batch, written)
             batch_report.setdefault("attempts", []).append(
                 {
@@ -553,13 +582,21 @@ def main() -> int:
         manifest["batches"].append(batch_report)
         write_json(run_dir / "split-scene-report.json", manifest)
 
+    # Resume skips generation, never the final quality gate. Missing scenes fail
+    # explicitly rather than allowing a partial draft to replace the live tree.
+    expected_all = [f"draft-scenes/{load_json(path)['scene_id']}.md" for path in all_scene_cards]
+    missing = [rel for rel in expected_all if not (story / rel).is_file()]
+    failures = [f"missing scene: {rel}" for rel in missing]
+    if not missing:
+        failures.extend(validate_scene_batch(story, all_scene_cards, expected_all))
+    if failures:
+        manifest.update(status="failed_validation", failures=failures)
+        write_json(run_dir / "split-scene-report.json", manifest)
+        raise SystemExit("complete draft failed validation:\n" + "\n".join(failures))
     assembly = assemble_draft(story, all_scene_cards)
     manifest["assembly"] = assembly
     manifest["ended_at"] = now_stamp()
-    manifest["status"] = "success"
-    write_json(run_dir / "split-scene-report.json", manifest)
-    print(json.dumps(manifest, ensure_ascii=False, indent=2))
-    return 0
+    return manifest
 
 
 if __name__ == "__main__":
