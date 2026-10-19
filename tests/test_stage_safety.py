@@ -536,3 +536,46 @@ def test_manual_pack_instructions_resume_from_canonical_bundle(tmp_path, monkeyp
     monkeypatch.setattr(storyforge, "validate_phase", lambda *a, **kw: subprocess.CompletedProcess([], 0, "", ""))
     assert storyforge.run_phase(args, story, run, run / "summary.md", 3, 1)
     assert (story / "draft.md").read_text().strip() == "MANUAL_NEW"
+
+
+@pytest.mark.parametrize("command", ["run", "approve-gate"])
+@pytest.mark.parametrize("run_id", ["..", "../../outside", "nested/run"])
+def test_cli_rejects_run_path_escape_before_artifacts(tmp_path, command, run_id):
+    story = tmp_path / "story"
+    write(story / "source.md", "original source")
+    args = [command, "--story", story, "--run-id", run_id]
+    if command == "run":
+        args += ["--runner", "manual-prompt-pack", "--dry-run", "--to-phase", "1"]
+    else:
+        args += ["--gate", "phase2_blueprint_review"]
+    result = run_storyforge(*args)
+    assert result.returncode == storyforge.RUNNER_EXIT_VALIDATION_FAILED
+    assert "Run ID must be" in result.stderr
+    assert not (story / "runs").exists()
+    assert not (story / "run-manifest.json").exists()
+    assert not (tmp_path / "outside").exists()
+    assert (story / "source.md").read_text() == "original source"
+
+
+@pytest.mark.parametrize("command", ["run", "approve-gate"])
+@pytest.mark.parametrize("kind", ["absolute", "symlink"])
+def test_cli_rejects_external_run_directory(tmp_path, command, kind):
+    story = tmp_path / "story"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    write(outside / "keep.txt", "keep")
+    write(story / "source.md", "original source")
+    run_id = str(outside)
+    if kind == "symlink":
+        (story / "runs").mkdir()
+        (story / "runs" / "linked").symlink_to(outside, target_is_directory=True)
+        run_id = "linked"
+    args = [command, "--story", story, "--run-id", run_id]
+    if command == "run":
+        args += ["--runner", "manual-prompt-pack", "--dry-run", "--to-phase", "1"]
+    else:
+        args += ["--gate", "phase2_blueprint_review"]
+    result = run_storyforge(*args)
+    assert result.returncode == storyforge.RUNNER_EXIT_VALIDATION_FAILED
+    assert sorted(p.name for p in outside.iterdir()) == ["keep.txt"]
+    assert (outside / "keep.txt").read_text() == "keep"

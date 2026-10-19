@@ -33,6 +33,7 @@ from storyforge_lib import (
     write_json,
     write_text,
 )
+from run_paths import run_directory
 from production_normalize import normalize_story
 from approval_snapshots import (approval_snapshot, configuration, outputs, require_approval, snapshot)
 
@@ -569,7 +570,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
 
     if not args.run_id:
         args.run_id = now_run_id()
-    run_dir = story / "runs" / args.run_id
+    run_dir = run_directory(story, args.run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     summary = init_summary(story, run_dir, args.run_id, args.runner, args.from_phase, args.max_retries)
     update_manifest(
@@ -707,9 +708,7 @@ def _approve_gate(args: argparse.Namespace) -> int:
     import yaml
     metadata = yaml.safe_load((story / "story.yaml").read_text()) if (story / "story.yaml").exists() else {}
     run_id = args.run_id or (metadata or {}).get("automation", {}).get("last_run_id", "")
-    if not run_id or Path(run_id).name != run_id:
-        raise ValueError("Approval requires a valid --run-id from a completed blueprint phase")
-    run_dir = story / "runs" / run_id
+    run_dir = run_directory(story, run_id)
     pending = load_json(run_dir / "blueprint-pending.json")
     config = dict(pending["configuration"])
     if getattr(args, "runner", None) is not None:
