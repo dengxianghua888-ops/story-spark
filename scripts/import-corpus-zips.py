@@ -9,6 +9,7 @@ we recover the original bytes from CP437 first.
 from __future__ import annotations
 
 import argparse
+import codecs
 import datetime as dt
 import hashlib
 import json
@@ -36,18 +37,41 @@ def decode_zip_name(name: str, utf8_flag: bool) -> str:
     return name
 
 
-def decode_text(data: bytes) -> str:
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+def text_encoding(encoding: str | None) -> str | None:
+    """Validate an explicit text codec before creating any import output."""
+    if encoding is None:
+        return None
+    try:
+        codec = codecs.lookup(encoding)
         try:
-            return data.decode("utf-16")
+            b"\x00".decode(codec.name)
         except UnicodeDecodeError:
+            # Incomplete character data still proves this is a text decoder.
             pass
-    for encoding in ("utf-8-sig", "utf-8", "utf-16", "gb18030", "gbk"):
+    except (LookupError, TypeError, ValueError) as exc:
+        raise ValueError(f"Unsupported text encoding: {encoding}") from exc
+    return codec.name
+
+
+def decode_text(data: bytes, encoding: str | None = None) -> str:
+    """Prefer BOMs and the documented UTF-8/Windows Chinese source formats.
+
+    BOM-less UTF-16 is ambiguous with legacy encodings; callers must explicitly
+    select utf-16-le or utf-16-be instead of guessing the host byte order.
+    """
+    encoding = text_encoding(encoding)
+    if encoding is not None:
+        text = data.decode(encoding)
+    elif data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = data.decode("utf-16")
+    else:
         try:
-            return data.decode(encoding)
+            text = data.decode("utf-8-sig")
         except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
+            text = data.decode("gb18030")
+    if any(ord(char) < 32 and char not in "\t\r\n" or ord(char) == 127 for char in text):
+        raise ValueError("Non-text control characters; check the input or specify --encoding")
+    return text
 
 
 def canonical_body(text: str) -> str:
@@ -143,7 +167,9 @@ def iter_txt_members(zip_path: Path):
             yield info, decoded_name, archive.read(info)
 
 
-def import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool) -> dict[str, object]:
+def import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
+                    encoding: str | None = None) -> dict[str, object]:
+    encoding = text_encoding(encoding)
     corpus.mkdir(parents=True, exist_ok=True)
     manifest_path = corpus / "_manifest.tsv"
     manifest_lines, used_slugs = load_manifest(manifest_path)
@@ -165,7 +191,11 @@ def import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool) -> dict[
             continue
 
         for _info, member_name, data in members:
-            text = decode_text(data)
+            try:
+                text = decode_text(data, encoding)
+            except (UnicodeError, ValueError) as exc:
+                errors.append({"archive": str(zip_path), "member": member_name, "error": str(exc)})
+                continue
             digest = fingerprint(text)
             title = Path(member_name).stem
             if digest in existing_hashes:
@@ -211,9 +241,13 @@ def main() -> int:
     parser.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--encoding", help="Explicit text codec, e.g. utf-16-le for BOM-less UTF-16")
     args = parser.parse_args()
 
-    result = import_archives([Path(item).expanduser() for item in args.zips], Path(args.corpus), args.dry_run)
+    try:
+        result = import_archives([Path(item).expanduser() for item in args.zips], Path(args.corpus), args.dry_run, args.encoding)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
