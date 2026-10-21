@@ -1,9 +1,12 @@
 """Import synthetic multilingual ZIP fixtures without corrupting source text."""
 import importlib.util
 from pathlib import Path
+import sys
 import zipfile
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 SPEC = importlib.util.spec_from_file_location(
     "corpus_zip_importer", Path(__file__).resolve().parents[1] / "scripts/import-corpus-zips.py")
