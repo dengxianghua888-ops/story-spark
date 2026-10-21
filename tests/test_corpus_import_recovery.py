@@ -1,17 +1,17 @@
 """Failure/replay contracts using real ZIP files and synthetic source text."""
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import storyforge_lib as lib  # noqa: E402
+lib = importlib.import_module("storyforge_lib")
 
 SPEC = importlib.util.spec_from_file_location("recoverable_corpus_importer", ROOT / "scripts/import-corpus-zips.py")
 importer = importlib.util.module_from_spec(SPEC)
@@ -49,9 +49,11 @@ class CorpusRecoveryTests(unittest.TestCase):
                 raise OSError("injected second source failure")
             return real_write(*args, **kwargs)
 
-        with patch.object(importer, "write_source", fail_second):
-            with self.assertRaisesRegex(OSError, "second source failure"):
-                self.run_import()
+        with (
+            patch.object(importer, "write_source", fail_second),
+            self.assertRaisesRegex(OSError, "second source failure"),
+        ):
+            self.run_import()
         first = next(self.corpus.glob("*/source.md"))
         saved = first.read_bytes()
         self.assertFalse((self.corpus / "_manifest.tsv").exists())
@@ -86,7 +88,7 @@ namespace['import_archives'].__globals__['write_source'] = commit_then_exit
 namespace['import_archives']([Path(sys.argv[2])], Path(sys.argv[3]), False)
 """
         result = subprocess.run([sys.executable, "-c", script, str(ROOT / "scripts"),
-                                 str(self.archive), str(self.corpus)], capture_output=True, text=True)
+                                 str(self.archive), str(self.corpus)], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 73, result.stderr)
         self.assertEqual(len(list(self.corpus.glob("*/source.md"))), 1)
         self.assertFalse((self.corpus / "_manifest.tsv").exists())
@@ -122,9 +124,11 @@ namespace['import_archives']([Path(sys.argv[2])], Path(sys.argv[3]), False)
             with patch.object(lib.os, "fdopen", lambda *a, **kw: PartialWrite(real_fdopen(*a, **kw))):
                 return lib.write_text(target, text)
 
-        with patch.object(importer, "write_text", fail_manifest_write):
-            with self.assertRaisesRegex(OSError, "partial temporary manifest"):
-                self.run_import()
+        with (
+            patch.object(importer, "write_text", fail_manifest_write),
+            self.assertRaisesRegex(OSError, "partial temporary manifest"),
+        ):
+            self.run_import()
         self.assertEqual(path.read_bytes(), original)
         self.assertEqual(list(self.corpus.glob(".*.tmp")), [])
         self.assertEqual(len(list(self.corpus.glob("*/source.md"))), 2)
@@ -147,9 +151,11 @@ namespace['import_archives']([Path(sys.argv[2])], Path(sys.argv[3]), False)
                 raise OSError("injected manifest replace failure")
             return real_replace(source, target)
 
-        with patch.object(lib.os, "replace", fail_replace):
-            with self.assertRaisesRegex(OSError, "manifest replace"):
-                self.run_import()
+        with (
+            patch.object(lib.os, "replace", fail_replace),
+            self.assertRaisesRegex(OSError, "manifest replace"),
+        ):
+            self.run_import()
         self.assertEqual(path.read_bytes(), original)
         self.assertEqual(path.stat().st_mode & 0o777, 0o640)
         self.assertEqual(list(self.corpus.glob(".*.tmp")), [])
@@ -164,9 +170,11 @@ namespace['import_archives']([Path(sys.argv[2])], Path(sys.argv[3]), False)
                 raise OSError("injected source replace failure")
             return real_replace(source, target)
 
-        with patch.object(lib.os, "replace", fail_replace):
-            with self.assertRaisesRegex(OSError, "source replace"):
-                self.run_import()
+        with (
+            patch.object(lib.os, "replace", fail_replace),
+            self.assertRaisesRegex(OSError, "source replace"),
+        ):
+            self.run_import()
         self.assertEqual(list(self.corpus.glob("*/source.md")), [])
         self.assertEqual(list(self.corpus.glob("*/.*.tmp")), [])
         self.assertEqual(len(self.run_import()["imported"]), 2)
@@ -245,7 +253,7 @@ namespace['import_archives']([Path(sys.argv[2])], Path(sys.argv[3]), False)
         recovered = self.run_import()
         self.assertEqual(len(recovered["recovered"]), 2)
         command = [sys.executable, str(ROOT / "scripts/update-corpus-index.py"), "--corpus", str(self.corpus)]
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         entries = json.loads((self.corpus / "_index.json").read_text())["entries"]
         self.assertEqual(len(entries), 2)
