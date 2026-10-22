@@ -109,8 +109,8 @@ def _scaffold_story(entry: Dict[str, Any], slug_prefix: str, run_id: str) -> Pat
         f"genre: {entry.get('genre','')}\n"
         f"\n"
         f"source_policy:\n"
-        f"  access: trusted_runners_allowed\n"
-        f'  notes: "auto-batch generated; verify before any external upload"\n'
+        f"  access: denied\n"
+        f'  notes: "auto-batch generated; explicit human source approval required before external runners"\n'
     )
     (story / "story.yaml").write_text(yaml, encoding="utf-8")
     return story

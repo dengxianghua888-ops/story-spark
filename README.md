@@ -239,6 +239,11 @@ cp /path/to/source.txt stories/my_project/source.md
 
 Agent runner 默认 provider 优先级为 `codex -> openclaw -> claude -> manual-prompt-pack`。所有 provider 都必须输出 artifact bundle,由脚本统一解析、落盘和验证。
 
+`corpus-picker.py` 新建的故事默认写入 `source_policy.access: denied`。
+使用外部 runner 前需由用户明确批准该故事的原文访问;选样不会继承或生成审批,也不会更改已存在故事的原文与授权。
+默认拒绝时,`agent` / `codex` / `openclaw` / `claude` 入口以退出码 30 停止。
+`mock` 和 `manual-prompt-pack` 仍可用于离线验证或生成人工接力材料。
+
 ### 批量建 corpus few-shot 库
 
 ```bash
