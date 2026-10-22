@@ -228,7 +228,7 @@ cp /path/to/source.txt stories/my_project/source.md
 `v4` 为 1–5,`production` / `ultra_short` 为 1–8,`production_v6` 为 1–9。
 CLI 参数解析仅接受 1–9 的整数;超出该全局范围或非整数会以退出码 2 拒绝。
 解析通过后再校验模式范围与阶段顺序:超出模式上界或结束阶段早于开始阶段时,
-在创建运行日志前以退出码 11 拒绝,不会截断范围或记录为已完成。
+在原文授权检查与创建运行日志前以退出码 11 拒绝,不会截断范围或记录为已完成。
 
 **手工模式 vs 自动模式**:
 
@@ -254,6 +254,12 @@ Agent runner 默认 provider 优先级为 `codex -> openclaw -> claude -> manual
 失败暂存副本同样为 0700 且被 Git 忽略,仍应按原文隐私规则保管;这里不承诺同用户隔离或掉电持久性。
 发布依赖 Linux `renameat2(RENAME_NOREPLACE)` 或 macOS `renamex_np(RENAME_EXCL)`;
 不支持的平台或文件系统会报错并保留暂存副本,不会退回覆盖式发布。
+
+`scripts/batch-run.sh --mode random-batch --runner agent` (或 `codex` / `openclaw` / `claude`)
+选样后会先检查整批原文授权。任一故事为 `denied` 时,打印全部固定选中路径、待批准路径和逐个恢复命令,
+以退出码 30 停止;不会启动任何故事 runner 或生成质量完成报告。请人工核查原文访问批准后,
+对打印的固定路径使用 `storyforge.py run` 命令继续,保留默认人工阶段门;不要重新随机选样。
+脚本不会替用户批准或修改任何故事的授权。默认 `manual-prompt-pack` 与显式 `mock` 保持离线批跑流程。
 
 ### 批量建 corpus few-shot 库
 

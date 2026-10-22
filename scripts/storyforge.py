@@ -558,6 +558,17 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     if not args.dry_run and not (story / "source.md").exists():
         eprint(f"missing source.md: {story / 'source.md'}")
         return 11
+    last_phase = phase_count(args.mode)
+    if not 1 <= args.from_phase <= last_phase:
+        eprint(f"--from-phase ({args.from_phase}) must be within 1-{last_phase} for mode {args.mode}")
+        return 11
+    if args.to_phase is not None and not 1 <= args.to_phase <= last_phase:
+        eprint(f"--to-phase ({args.to_phase}) must be within 1-{last_phase} for mode {args.mode}")
+        return 11
+    if args.to_phase is not None and args.to_phase < args.from_phase:
+        eprint(f"--to-phase ({args.to_phase}) must be >= --from-phase ({args.from_phase})")
+        return 11
+
     # Local previews render inputs only; source approval gates actual runners.
     if (not args.dry_run and story_source_access(story) == "denied"
             and args.runner in {"agent", "codex", "openclaw", "claude"}):
@@ -568,17 +579,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         validate_bundle_schema(ROOT, args.mode)
     except ValueError as exc:
         eprint(str(exc))
-        return 11
-
-    last_phase = phase_count(args.mode)
-    if not 1 <= args.from_phase <= last_phase:
-        eprint(f"--from-phase ({args.from_phase}) must be within 1-{last_phase} for mode {args.mode}")
-        return 11
-    if args.to_phase is not None and not 1 <= args.to_phase <= last_phase:
-        eprint(f"--to-phase ({args.to_phase}) must be within 1-{last_phase} for mode {args.mode}")
-        return 11
-    if args.to_phase is not None and args.to_phase < args.from_phase:
-        eprint(f"--to-phase ({args.to_phase}) must be >= --from-phase ({args.from_phase})")
         return 11
 
     if not args.run_id:

@@ -63,6 +63,38 @@ class CorpusPickerPolicyTests(unittest.TestCase):
                     execute.assert_not_called()
                 self.assertFalse((story / "runs").exists())
 
+    def test_denied_external_phase_errors_precede_source_access_checks(self):
+        story = self.scaffold("phase-errors")
+        before = {path.name: path.read_bytes() for path in story.iterdir()}
+        for runner in ("agent", "codex", "openclaw", "claude"):
+            for mode, maximum in (("v4", 5), ("production", 8),
+                                  ("ultra_short", 8), ("production_v6", 9)):
+                invalid = [["--from-phase", "3", "--to-phase", "2"]]
+                if maximum < 9:
+                    invalid += [["--from-phase", str(maximum + 1)],
+                                ["--to-phase", str(maximum + 1)]]
+                for options in invalid:
+                    with self.subTest(runner=runner, mode=mode, options=options):
+                        args = storyforge.build_parser().parse_args([
+                            "run", "--story", str(story), "--runner", runner,
+                            "--mode", mode, *options,
+                        ])
+                        with patch.object(storyforge, "story_source_access", side_effect=AssertionError(
+                                "Pure phase errors must precede source authorization")) as access:
+                            self.assertEqual(storyforge.run_pipeline(args), 11)
+                            access.assert_not_called()
+                with self.subTest(runner=runner, mode=mode, options="valid"):
+                    args = storyforge.build_parser().parse_args([
+                        "run", "--story", str(story), "--runner", runner,
+                        "--mode", mode, "--to-phase", "1",
+                    ])
+                    with patch.object(storyforge, "run_phase", side_effect=AssertionError(
+                            "Valid phases must not authorize a denied source")) as phase:
+                        self.assertEqual(storyforge.run_pipeline(args), 30)
+                        phase.assert_not_called()
+                self.assertFalse((story / "runs").exists())
+                self.assertEqual({path.name: path.read_bytes() for path in story.iterdir()}, before)
+
     def test_rescaffolding_preserves_every_existing_story_byte_and_approval(self):
         story = self.scaffold()
         (story / "story.yaml").write_text(
