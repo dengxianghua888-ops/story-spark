@@ -558,7 +558,20 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     if not args.dry_run and not (story / "source.md").exists():
         eprint(f"missing source.md: {story / 'source.md'}")
         return 11
-    if story_source_access(story) == "denied" and args.runner in {"agent", "codex", "openclaw", "claude"}:
+    last_phase = phase_count(args.mode)
+    if not 1 <= args.from_phase <= last_phase:
+        eprint(f"--from-phase ({args.from_phase}) must be within 1-{last_phase} for mode {args.mode}")
+        return 11
+    if args.to_phase is not None and not 1 <= args.to_phase <= last_phase:
+        eprint(f"--to-phase ({args.to_phase}) must be within 1-{last_phase} for mode {args.mode}")
+        return 11
+    if args.to_phase is not None and args.to_phase < args.from_phase:
+        eprint(f"--to-phase ({args.to_phase}) must be >= --from-phase ({args.from_phase})")
+        return 11
+
+    # Local previews render inputs only; source approval gates actual runners.
+    if (not args.dry_run and story_source_access(story) == "denied"
+            and args.runner in {"agent", "codex", "openclaw", "claude"}):
         eprint(f"source_policy.access=denied blocks runner {args.runner}")
         return 30
 
@@ -592,10 +605,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
 
     phase = args.from_phase
     retry = 0
-    max_phase = min(phase_count(args.mode), args.to_phase or phase_count(args.mode))
-    if args.to_phase and args.to_phase < args.from_phase:
-        eprint(f"--to-phase ({args.to_phase}) must be >= --from-phase ({args.from_phase})")
-        return 11
+    max_phase = args.to_phase if args.to_phase is not None else last_phase
     review_phase = phase_for_role(args.mode, "critic")
     rewrite_phase = phase_for_role(args.mode, "scene")
     while phase <= max_phase:

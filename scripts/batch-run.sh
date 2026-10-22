@@ -155,15 +155,51 @@ run_random_batch() {
     done < <(python3 -c "import sys,json;d=json.loads(sys.stdin.read());[print(s) for s in d['stories']]" <<<"$pick_json")
 
     log "INFO" "随机选样 ${#stories[@]} 篇"
+    local rubric_args=()
+    if [[ "$NO_RUBRIC" == "true" ]]; then
+        rubric_args+=(--skip-rubric)
+    else
+        rubric_args+=(--rubric-threshold "$RUBRIC_THRESHOLD")
+    fi
+    case "$RUNNER" in
+        agent|codex|openclaw|claude)
+            local preflight_status=0
+            python3 - "$ROOT" "$RUNNER" "${#rubric_args[@]}" "${rubric_args[@]}" "${stories[@]}" <<'PY' 2>&1 | tee -a "$BATCH_LOG" || preflight_status=$?
+import shlex
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+runner = sys.argv[2]
+rubric_count = int(sys.argv[3])
+rubric_args = sys.argv[4:4 + rubric_count]
+stories = [Path(value) for value in sys.argv[4 + rubric_count:]]
+sys.path.insert(0, str(root / "scripts"))
+from storyforge import story_source_access
+
+denied = [story for story in stories if story_source_access(story) == "denied"]
+if denied:
+    print("等待人工批准原文访问; 本批次未启动任何 runner, 未生成质量完成报告。")
+    for story in stories:
+        print(f"固定选中故事: {story}")
+    for story in denied:
+        print(f"待批准 (source_policy.access=denied): {story}")
+    print("请先人工核查并批准待批故事; 批准后对固定路径逐个运行以下命令, 不要重新随机选样:")
+    for story in stories:
+        print(shlex.join(["python3", str(root / "scripts/storyforge.py"), "run",
+                          "--story", str(story), "--runner", runner, "--mode", "production", *rubric_args]))
+    sys.exit(30)
+PY
+            if [[ "$preflight_status" -ne 0 ]]; then
+                return "$preflight_status"
+            fi
+            ;;
+    esac
+
     local ok=0 fail=0
     for st in "${stories[@]}"; do
         log "INFO" "处理 $st (runner=$RUNNER)"
-        local sf_args=(run --story "$st" --runner "$RUNNER" --mode production --no-human-gates)
-        if [[ "$NO_RUBRIC" == "true" ]]; then
-            sf_args+=(--skip-rubric)
-        else
-            sf_args+=(--rubric-threshold "$RUBRIC_THRESHOLD")
-        fi
+        local sf_args=(run --story "$st" --runner "$RUNNER" --mode production --no-human-gates "${rubric_args[@]}")
         if python3 "$ROOT/scripts/storyforge.py" "${sf_args[@]}" 2>&1 | tee -a "$BATCH_LOG"; then
             ok=$((ok + 1))
         else
