@@ -1,5 +1,6 @@
 """New picker stories require source approval; existing approvals are retained."""
 import importlib.util
+import json
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,39 @@ class CorpusPickerPolicyTests(unittest.TestCase):
                     self.assertTrue((story / "final.md").is_file())
                 else:
                     self.assertTrue((story / "runs/offline/manual-prompt-pack/phase1.todo.md").is_file())
+
+    def test_denied_story_external_runner_dry_runs_only_render_local_inputs(self):
+        for runner in ("agent", "codex", "openclaw", "claude"):
+            with self.subTest(runner=runner):
+                story = self.scaffold(f"dry-{runner}")
+                before = {name: (story / name).read_bytes()
+                          for name in ("story.yaml", "source.md", "pick-card.json")}
+                args = storyforge.build_parser().parse_args([
+                    "run", "--story", str(story), "--runner", runner,
+                    "--from-phase", "1", "--to-phase", "5", "--run-id", "preview", "--dry-run",
+                ])
+                with (patch.object(storyforge, "command_for_runner", side_effect=AssertionError(
+                        "Dry run must not construct any provider command")) as commands,
+                      patch.object(storyforge, "run_command_with_heartbeat", side_effect=AssertionError(
+                          "Dry run must not execute any provider")) as execute):
+                    self.assertEqual(storyforge.run_pipeline(args), 0)
+                    commands.assert_not_called()
+                    execute.assert_not_called()
+                run = story / "runs/preview"
+                self.assertIn(self.source.read_text(), (run / "phase1.prompt.md").read_text())
+                self.assertTrue((run / "phase5.prompt.md").is_file())
+                self.assertEqual(json.loads((run / "run-manifest.json").read_text())["source_access"], "denied")
+                self.assertFalse(list(run.glob("*.completed-snapshot.json")))
+                self.assertFalse((run / "blueprint-approval.json").exists())
+                self.assertEqual({name: (story / name).read_bytes() for name in before}, before)
+
+                # Reusing the preview's run ID never authorizes real execution.
+                args.dry_run = False
+                with patch.object(storyforge, "run_phase", side_effect=AssertionError(
+                        "A denied source must still block actual execution")) as phase:
+                    self.assertEqual(storyforge.run_pipeline(args), 30)
+                    phase.assert_not_called()
+                self.assertEqual({name: (story / name).read_bytes() for name in before}, before)
 
 
 if __name__ == "__main__":

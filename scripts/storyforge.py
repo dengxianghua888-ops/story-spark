@@ -558,7 +558,9 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     if not args.dry_run and not (story / "source.md").exists():
         eprint(f"missing source.md: {story / 'source.md'}")
         return 11
-    if story_source_access(story) == "denied" and args.runner in {"agent", "codex", "openclaw", "claude"}:
+    # Local previews render inputs only; source approval gates actual runners.
+    if (not args.dry_run and story_source_access(story) == "denied"
+            and args.runner in {"agent", "codex", "openclaw", "claude"}):
         eprint(f"source_policy.access=denied blocks runner {args.runner}")
         return 30
 

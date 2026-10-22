@@ -47,6 +47,7 @@ class PickerPublicationTests(unittest.TestCase):
         return sorted((self.root / "stories").glob(f".{prefix}_synthetic.picker-*"))
 
     def assert_denied_complete(self, story):
+        self.assertEqual(stat.S_IMODE(story.stat().st_mode), 0o700)
         manifest = yaml.safe_load((story / "story.yaml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["source_policy"]["access"], "denied")
         self.assertEqual((story / "source.md").read_bytes(), self.source.read_bytes())
@@ -166,11 +167,13 @@ class PickerPublicationTests(unittest.TestCase):
                     (story / "story.yaml").write_text(f"source_policy:\n  access: {access}\n", encoding="utf-8")
                 before = {path.name: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
                           for path in story.iterdir()}
+                directory_mode = stat.S_IMODE(story.stat().st_mode)
                 policy = storyforge.story_source_access(story)
                 self.assertEqual(self.scaffold(prefix), story)
                 self.assertEqual(storyforge.story_source_access(story), policy)
                 self.assertEqual({path.name: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
                                   for path in story.iterdir()}, before)
+                self.assertEqual(stat.S_IMODE(story.stat().st_mode), directory_mode)
                 self.assertEqual(self.private_attempts(prefix), [])
 
     def test_two_concurrent_pickers_publish_one_complete_scaffold(self):

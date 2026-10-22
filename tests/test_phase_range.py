@@ -49,6 +49,15 @@ class PhaseRangeTests(unittest.TestCase):
         self.assert_rejected_without_run(result)
         self.assertIn("must be >= --from-phase", result.stderr)
 
+    def test_global_phase_parse_errors_keep_exit_two_without_run_artifacts(self):
+        for option in ("--phase", "--from-phase", "--to-phase"):
+            for value in (0, 10, "not-an-integer"):
+                with self.subTest(option=option, value=value):
+                    result = self.run_cli("v4", option, value)
+                    self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+                    self.assertFalse((self.story / "runs").exists())
+                    self.assertEqual(list(self.story.iterdir()), [self.story / "source.md"])
+
     def test_last_phase_and_aliases_are_accepted_in_each_mode(self):
         for mode, maximum in [("v4", 5), ("full", 5), ("production", 8),
                               ("prod", 8), ("ultra_short", 8), ("production_v6", 9),

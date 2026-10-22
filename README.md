@@ -226,7 +226,9 @@ cp /path/to/source.txt stories/my_project/source.md
 
 `--phase` / `--from-phase` 和 `--to-phase` 必须处于所选模式的阶段范围:
 `v4` 为 1–5,`production` / `ultra_short` 为 1–8,`production_v6` 为 1–9。
-结束阶段不能早于开始阶段。无效范围会在创建运行日志前以退出码 11 拒绝,不会截断范围或记录为已完成。
+CLI 参数解析仅接受 1–9 的整数;超出该全局范围或非整数会以退出码 2 拒绝。
+解析通过后再校验模式范围与阶段顺序:超出模式上界或结束阶段早于开始阶段时,
+在创建运行日志前以退出码 11 拒绝,不会截断范围或记录为已完成。
 
 **手工模式 vs 自动模式**:
 
@@ -241,12 +243,15 @@ Agent runner 默认 provider 优先级为 `codex -> openclaw -> claude -> manual
 
 `corpus-picker.py` 新建的故事默认写入 `source_policy.access: denied`。
 使用外部 runner 前需由用户明确批准该故事的原文访问;选样不会继承或生成审批,也不会更改已存在故事的原文与授权。
-默认拒绝时,`agent` / `codex` / `openclaw` / `claude` 入口以退出码 30 停止。
+默认拒绝时,实际执行 `agent` / `codex` / `openclaw` / `claude` 会以退出码 30 停止。
 `mock` 和 `manual-prompt-pack` 仍可用于离线验证或生成人工接力材料。
+`--dry-run` 只在故事的 `runs/` 目录生成本地 prompt 与运行清单,不会启动 runner,
+因此无需源文外发批准,也不会修改源文授权。生成的 prompt 含输入内容,按原文相同规则保管。
 新故事先在同父目录的私有 `.故事名.picker-*` 暂存目录写入拒绝策略,再复制原文和选样卡;
 全部完成后才用不覆盖目标的原子目录改名发布。写入、中断或发布失败会保留暂存副本,
 重试会创建新候选;既有故事(包括缺少 manifest 的兼容故事)及并发出现的目标均保持原样。
-暂存副本默认权限为 0700 且被 Git 忽略,仍应按原文隐私规则保管;这里不承诺同用户隔离或掉电持久性。
+新发布故事保留暂存目录的 0700 权限,适用于同一用户运行产线;既有目录权限不变。
+失败暂存副本同样为 0700 且被 Git 忽略,仍应按原文隐私规则保管;这里不承诺同用户隔离或掉电持久性。
 发布依赖 Linux `renameat2(RENAME_NOREPLACE)` 或 macOS `renamex_np(RENAME_EXCL)`;
 不支持的平台或文件系统会报错并保留暂存副本,不会退回覆盖式发布。
 
