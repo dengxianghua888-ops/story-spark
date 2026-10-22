@@ -568,6 +568,17 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         eprint(str(exc))
         return 11
 
+    last_phase = phase_count(args.mode)
+    if not 1 <= args.from_phase <= last_phase:
+        eprint(f"--from-phase ({args.from_phase}) must be within 1-{last_phase} for mode {args.mode}")
+        return 11
+    if args.to_phase is not None and not 1 <= args.to_phase <= last_phase:
+        eprint(f"--to-phase ({args.to_phase}) must be within 1-{last_phase} for mode {args.mode}")
+        return 11
+    if args.to_phase is not None and args.to_phase < args.from_phase:
+        eprint(f"--to-phase ({args.to_phase}) must be >= --from-phase ({args.from_phase})")
+        return 11
+
     if not args.run_id:
         args.run_id = now_run_id()
     run_dir = run_directory(story, args.run_id)
@@ -592,10 +603,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
 
     phase = args.from_phase
     retry = 0
-    max_phase = min(phase_count(args.mode), args.to_phase or phase_count(args.mode))
-    if args.to_phase and args.to_phase < args.from_phase:
-        eprint(f"--to-phase ({args.to_phase}) must be >= --from-phase ({args.from_phase})")
-        return 11
+    max_phase = args.to_phase if args.to_phase is not None else last_phase
     review_phase = phase_for_role(args.mode, "critic")
     rewrite_phase = phase_for_role(args.mode, "scene")
     while phase <= max_phase:

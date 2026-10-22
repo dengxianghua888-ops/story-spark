@@ -224,6 +224,10 @@ cp /path/to/source.txt stories/my_project/source.md
 ./pipeline.sh --story stories/my_project --dry-run
 ```
 
+`--phase` / `--from-phase` 和 `--to-phase` 必须处于所选模式的阶段范围:
+`v4` 为 1–5,`production` / `ultra_short` 为 1–8,`production_v6` 为 1–9。
+结束阶段不能早于开始阶段。无效范围会在创建运行日志前以退出码 11 拒绝,不会截断范围或记录为已完成。
+
 **手工模式 vs 自动模式**:
 
 | 模式 | 怎么工作 | 适合 |
