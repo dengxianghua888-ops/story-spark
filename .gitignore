@@ -57,3 +57,4 @@ scratch/
 # Local transaction candidates/backups retain private story inputs.
 .*.attempt-*/
 .*.storyforge.lock
+.*.picker-*/

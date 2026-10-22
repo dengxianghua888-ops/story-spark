@@ -15,11 +15,14 @@ Already-existing slugs in stories/ are skipped.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime as _dt
 import json
+import os
 import random
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -71,34 +74,36 @@ def _stratified_sample(entries: List[Dict[str, Any]], count: int, rng: random.Ra
     return picks
 
 
+def _publish_scaffold(staged: Path, story: Path) -> None:
+    """Atomically publish a new directory without replacing any existing entry."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        rename = libc.renameat2
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                           ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(-100, os.fsencode(staged), -100, os.fsencode(story), 1)  # RENAME_NOREPLACE
+    elif sys.platform == "darwin" and hasattr(libc, "renamex_np"):
+        rename = libc.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(os.fsencode(staged), os.fsencode(story), 4)  # Darwin RENAME_EXCL
+    else:
+        raise OSError("Atomic new-story publication requires Linux renameat2 or macOS renamex_np")
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(story))
+
+
 def _scaffold_story(entry: Dict[str, Any], slug_prefix: str, run_id: str) -> Path:
     slug = f"{slug_prefix}_{entry['slug']}"
     story = STORIES_DIR / slug
-    if story.exists():
+    if story.exists() or story.is_symlink():
         return story
-    story.mkdir(parents=True)
-
-    source_src = ROOT / entry["source_path"]
-    if source_src.exists():
-        shutil.copy2(source_src, story / "source.md")
-    else:
-        (story / "source.md").write_text(f"# missing source for {entry['slug']}\n", encoding="utf-8")
-
-    pick_card = {
-        "slug": slug,
-        "corpus_slug": entry["slug"],
-        "genre": entry.get("genre"),
-        "mechanisms": entry.get("reversal_mechanisms", []),
-        "hook_type": entry.get("hook_type"),
-        "title_formula": entry.get("title_formula"),
-        "tomato_fit_score": entry.get("tomato_fit_score"),
-        "picked_at": _dt.datetime.now().isoformat(timespec="seconds"),
-        "run_id": run_id,
-    }
-    (story / "pick-card.json").write_text(
-        json.dumps(pick_card, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    story.parent.mkdir(parents=True, exist_ok=True)
+    # Keep failed attempts private and separate from normal story paths. A retry
+    # constructs a fresh candidate; it never treats an incomplete attempt as legacy.
+    staged = Path(tempfile.mkdtemp(prefix=f".{story.name}.picker-", dir=story.parent))
 
     yaml = (
         f"slug: {slug}\n"
@@ -112,7 +117,37 @@ def _scaffold_story(entry: Dict[str, Any], slug_prefix: str, run_id: str) -> Pat
         f"  access: denied\n"
         f'  notes: "auto-batch generated; explicit human source approval required before external runners"\n'
     )
-    (story / "story.yaml").write_text(yaml, encoding="utf-8")
+    # Policy precedes source bytes even inside the private candidate directory.
+    (staged / "story.yaml").write_text(yaml, encoding="utf-8")
+
+    source_src = ROOT / entry["source_path"]
+    if source_src.exists():
+        shutil.copy2(source_src, staged / "source.md")
+    else:
+        (staged / "source.md").write_text(f"# missing source for {entry['slug']}\n", encoding="utf-8")
+
+    pick_card = {
+        "slug": slug,
+        "corpus_slug": entry["slug"],
+        "genre": entry.get("genre"),
+        "mechanisms": entry.get("reversal_mechanisms", []),
+        "hook_type": entry.get("hook_type"),
+        "title_formula": entry.get("title_formula"),
+        "tomato_fit_score": entry.get("tomato_fit_score"),
+        "picked_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "run_id": run_id,
+    }
+    (staged / "pick-card.json").write_text(
+        json.dumps(pick_card, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        _publish_scaffold(staged, story)
+    except FileExistsError:
+        # A concurrent picker or owner may have created this path meanwhile.
+        # Never replace its bytes, metadata, symlink or legacy authorization.
+        if not story.exists() and not story.is_symlink():
+            raise
     return story
 
 

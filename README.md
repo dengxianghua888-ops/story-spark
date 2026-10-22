@@ -243,6 +243,12 @@ Agent runner 默认 provider 优先级为 `codex -> openclaw -> claude -> manual
 使用外部 runner 前需由用户明确批准该故事的原文访问;选样不会继承或生成审批,也不会更改已存在故事的原文与授权。
 默认拒绝时,`agent` / `codex` / `openclaw` / `claude` 入口以退出码 30 停止。
 `mock` 和 `manual-prompt-pack` 仍可用于离线验证或生成人工接力材料。
+新故事先在同父目录的私有 `.故事名.picker-*` 暂存目录写入拒绝策略,再复制原文和选样卡;
+全部完成后才用不覆盖目标的原子目录改名发布。写入、中断或发布失败会保留暂存副本,
+重试会创建新候选;既有故事(包括缺少 manifest 的兼容故事)及并发出现的目标均保持原样。
+暂存副本默认权限为 0700 且被 Git 忽略,仍应按原文隐私规则保管;这里不承诺同用户隔离或掉电持久性。
+发布依赖 Linux `renameat2(RENAME_NOREPLACE)` 或 macOS `renamex_np(RENAME_EXCL)`;
+不支持的平台或文件系统会报错并保留暂存副本,不会退回覆盖式发布。
 
 ### 批量建 corpus few-shot 库
 
