@@ -259,6 +259,8 @@ Agent runner 默认 provider 优先级为 `codex -> openclaw -> claude -> manual
 选样后会先检查整批原文授权。任一故事为 `denied` 时,打印全部固定选中路径、待批准路径和逐个恢复命令,
 以退出码 30 停止;不会启动任何故事 runner 或生成质量完成报告。请人工核查原文访问批准后,
 对打印的固定路径使用 `storyforge.py run` 命令继续,保留默认人工阶段门;不要重新随机选样。
+恢复命令保留批跑的 `--no-rubric` (转为 `--skip-rubric`) 或 `--rubric-threshold` 原值
+(默认 `8.0`);同时指定时以 `--no-rubric` 为准,与正常派发一致。
 脚本不会替用户批准或修改任何故事的授权。默认 `manual-prompt-pack` 与显式 `mock` 保持离线批跑流程。
 
 ### 批量建 corpus few-shot 库

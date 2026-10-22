@@ -35,7 +35,8 @@ def batch_root(tmp_path):
     return root
 
 
-def run_batch(root, runner=None, *, forbid_dispatch=True, dry_run=False):
+def run_batch(root, runner=None, *, forbid_dispatch=True, dry_run=False,
+              rubric_options=("--no-rubric",)):
     binary = root / "bin"
     binary.mkdir()
     dispatch = root / "dispatch.log"
@@ -46,7 +47,10 @@ def run_batch(root, runner=None, *, forbid_dispatch=True, dry_run=False):
     # generation are separately observable, and forbidden for blocked batches.
     python.write_text(
         "#!/usr/bin/env bash\n"
-        f"case \"$1\" in\n  */storyforge.py) printf dispatch >> {shlex.quote(str(dispatch))} ;;\n"
+        f"case \"$1\" in\n  */storyforge.py) printf dispatch >> {shlex.quote(str(dispatch))}\n"
+        f"    {shlex.quote(sys.executable)} -c "
+        + shlex.quote('import json,sys;open(sys.argv[1],"a").write(json.dumps(sys.argv[2:])+"\\n")')
+        + f" {shlex.quote(str(root / 'dispatch-args.jsonl'))} \"$@\" ;;\n"
         f"  */batch-quality-report.py) printf report >> {shlex.quote(str(report))} ;;\nesac\n"
         + ("case \"$1\" in */storyforge.py|*/batch-quality-report.py) exit 98 ;; esac\n"
            if forbid_dispatch else "")
@@ -59,7 +63,7 @@ def run_batch(root, runner=None, *, forbid_dispatch=True, dry_run=False):
         executable.write_text(f"#!/bin/sh\nprintf forbidden >> {shlex.quote(str(provider))}\nexit 99\n")
         executable.chmod(0o700)
     command = ["bash", str(root / "scripts/batch-run.sh"), "--mode", "random-batch",
-               "--count", "2", "--seed", "7", "--no-rubric"]
+               "--count", "2", "--seed", "7", *rubric_options]
     if runner is not None:
         command += ["--runner", runner]
     if dry_run:
@@ -103,6 +107,46 @@ def test_random_batch_new_denied_stories_handoff_before_any_dispatch(tmp_path, r
     assert "random-batch 完成" not in result.stdout and "汇总批次报告" not in result.stdout
     history = (root / "runs/picker-history.jsonl").read_text().splitlines()
     assert len(history) == 1  # One selection, retained for a fixed-path human handoff.
+
+
+@pytest.mark.parametrize("runner", ["agent", "codex", "openclaw", "claude"])
+@pytest.mark.parametrize("options,expected", [
+    ((), ["--rubric-threshold", "8.0"]),
+    (("--rubric-threshold", "9.25"), ["--rubric-threshold", "9.25"]),
+    (("--no-rubric",), ["--skip-rubric"]),
+    (("--rubric-threshold", "9.25", "--no-rubric"), ["--skip-rubric"]),
+])
+def test_random_batch_handoff_preserves_normal_dispatch_rubric_options(tmp_path, runner, options, expected):
+    root = batch_root(tmp_path / "handoff")
+    result, dispatch, report, provider = run_batch(root, runner, rubric_options=options)
+    assert result.returncode == 30, result.stdout + result.stderr
+    assert not dispatch.exists() and not report.exists() and not provider.exists()
+    commands = [shlex.split(line) for line in result.stdout.splitlines() if line.startswith("python3 ")]
+    assert len(commands) == 2
+    for command in commands:
+        assert command[command.index("production") + 1:] == expected
+        assert "--no-human-gates" not in command
+        story = Path(command[command.index("--story") + 1])
+        assert story.parent == root / "stories" and not (story / "runs").exists()
+        assert yaml.safe_load((story / "story.yaml").read_text())["source_policy"]["access"] == "denied"
+    assert len((root / "runs/picker-history.jsonl").read_text().splitlines()) == 1
+    assert not (root / "exports").exists()
+
+    # Compare actual Bash argv at the forbidden dispatch boundary for an
+    # already-approved synthetic selection; no external executable is called.
+    normal = batch_root(tmp_path / "normal")
+    approved = normal / "stories/already approved"
+    approved.mkdir(parents=True)
+    (approved / "source.md").write_text("Synthetic approved source.")
+    (approved / "story.yaml").write_text("source_policy:\n  access: trusted_runners_allowed\n")
+    before = story_snapshot(approved)
+    fixed_picker(normal, [approved])
+    dispatched, dispatch, report, provider = run_batch(normal, runner, rubric_options=options)
+    assert dispatched.returncode == 98 and dispatch.read_text() == "dispatch"
+    assert report.read_text() == "report" and not provider.exists()
+    actual = json.loads((normal / "dispatch-args.jsonl").read_text())
+    assert actual[actual.index("--no-human-gates") + 1:] == expected
+    assert story_snapshot(approved) == before
 
 
 def test_random_batch_late_denied_stops_entire_batch_preserving_legacy_and_approved(tmp_path):
