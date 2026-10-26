@@ -245,6 +245,10 @@ Agent runner 默认 provider 优先级为 `codex -> openclaw -> claude -> manual
 使用外部 runner 前需由用户明确批准该故事的原文访问;选样不会继承或生成审批,也不会更改已存在故事的原文与授权。
 默认拒绝时,实际执行 `agent` / `codex` / `openclaw` / `claude` 会以退出码 30 停止。
 `mock` 和 `manual-prompt-pack` 仍可用于离线验证或生成人工接力材料。
+专用 `scripts/generate_scene_batches.py` 入口同样检查原文授权,拒绝时以退出码 30 停止,
+不会创建本次运行或启动 Codex。`--no-human-gates` 只跳过蓝图人工审核,不批准原文外发。
+每次场景生成和修复调用前会重新核查当前故事与候选故事的原文策略;
+中途撤回授权会停止后续调用,保留旧稿、拒绝策略和失败候选,不会发布候选。
 `--dry-run` 只在故事的 `runs/` 目录生成本地 prompt 与运行清单,不会启动 runner,
 因此无需源文外发批准,也不会修改源文授权。生成的 prompt 含输入内容,按原文相同规则保管。
 新故事先在同父目录的私有 `.故事名.picker-*` 暂存目录写入拒绝策略,再复制原文和选样卡;

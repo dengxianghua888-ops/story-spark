@@ -29,6 +29,7 @@ from rhythm_metrics import rhythm_profile  # noqa: E402
 from scene_context import LEDGER, context_for_batch, scene_order  # noqa: E402
 from storyforge_lib import StagedStory, story_write_lock, now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
 from repairs import repair_fragmentation_and_soft_words  # noqa: E402
+from source_policy import SourceAccessDenied, require_source_access  # noqa: E402
 
 
 def count_nonspace(text: str) -> int:
@@ -450,6 +451,11 @@ def main() -> int:
     run_dir = story / "runs" / run_id
     # Own the same stable lock as the main pipeline, including approval checks.
     with story_write_lock(story):
+        try:
+            require_source_access(story)
+        except SourceAccessDenied as exc:
+            print(str(exc), file=sys.stderr)
+            return 30
         check_blueprint_approval(story, args)
         run_dir.mkdir(parents=True, exist_ok=True)
         with StagedStory(story, run_dir, 5) as staged:
@@ -459,6 +465,8 @@ def main() -> int:
             })
             try:
                 manifest = generate_candidate(staged.path, story, run_dir, run_id, args)
+                require_source_access(story)
+                require_source_access(staged.path)
                 check_blueprint_approval(story, args)
                 check_blueprint_approval(staged.path, args)
                 manifest["status"] = "validated"
@@ -470,6 +478,9 @@ def main() -> int:
                 report = load_json(report_path) if report_path.exists() else {"run_id": run_id}
                 report.update(status="failed", error=str(exc), candidate=str(staged.path), ended_at=now_stamp())
                 write_json(report_path, report)
+                if isinstance(exc, SourceAccessDenied):
+                    print(str(exc), file=sys.stderr)
+                    return 30
                 raise
         manifest.update(status="success", ended_at=now_stamp())
         write_json(run_dir / "split-scene-report.json", manifest)
@@ -479,6 +490,8 @@ def main() -> int:
 
 def generate_candidate(story, live_story, run_dir, run_id, args):
     """Generate and validate the whole replacement without mutating live artifacts."""
+    require_source_access(live_story)
+    require_source_access(story)
     check_blueprint_approval(story, args)
     if not (story / "beat-bible.json").exists():
         raise SystemExit("missing beat-bible.json; run phase 4 first")
@@ -534,6 +547,8 @@ def generate_candidate(story, live_story, run_dir, run_id, args):
             attempt_out_path = run_dir / f"batch{index:02d}{suffix}.codex.out"
             attempt_log_path = run_dir / f"batch{index:02d}{suffix}.codex.log"
             write_text(attempt_prompt_path, current_prompt)
+            require_source_access(live_story)
+            require_source_access(story)
             check_blueprint_approval(live_story, args)
             check_blueprint_approval(story, args)
             completed = run_codex(current_prompt, attempt_out_path, args.model, args.effort, args.timeout)

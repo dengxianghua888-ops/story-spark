@@ -8,6 +8,18 @@
 - All model files, deterministic normalization/repair and validation/rubric checks run against an isolated sibling tree. Publication uses a single filesystem directory-exchange syscall. Partial candidate writes and failed checks do not change published artifacts. The standalone bundle-apply command stages and atomically applies its syntactic contract; semantic validation remains the pipeline's responsibility.
 - Failed candidate quality/review/diff/todo and validator/rubric diagnostics are supplied explicitly to retry prompts without publishing them. Feedback is retained through the scene rewrite and marked resolved only after the corresponding gate succeeds.
 - A wildcard output replaces its previous set. Old scenes/chapters are retained in the previous-tree backup, not mixed into the new candidate. Each attempt has its own UUID-like directory and backup location. Existing generated metadata cannot change source approval.
+- The dedicated split-scene entry point checks the same source policy as the main pipeline before creating run artifacts, and again before each initial/repair provider call. A blueprint approval or `--no-human-gates` does not authorize source transfer. A denial exits 30; a denial observed during an attempt retains the failed candidate and the previously published story. As with other external edits, the check cannot revoke a request already in flight.
+
+## Standalone phase-gate process contract
+
+`scripts/phase_gate.py` accepts a validator or rubric result only when the child
+process exits zero and emits a JSON object with `status: pass`. A nonzero exit
+cannot be overridden by an earlier JSON pass. Empty/malformed JSON, non-object
+JSON and unknown status values produce a failed report. The report retains the
+child exit code and stderr; CLI exits remain 23 for validator failure and 25 for
+rubric failure. An explicitly disabled rubric or an absent benchmark retains the
+existing skipped behavior. This helper still runs repairs in the selected story;
+it does not provide the main pipeline's candidate-publication transaction.
 
 ## Platform and operational boundaries
 
