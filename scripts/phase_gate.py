@@ -33,6 +33,30 @@ def _run_repairs(story: Path, phase: int, mode: str) -> Dict[str, Any]:
     return run_repair_pass(story, phase, mode)
 
 
+def _checked_payload(proc: subprocess.CompletedProcess[str], label: str) -> Dict[str, Any]:
+    """A JSON pass is valid only when its producing process also succeeded."""
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {"status": "fail", "failures": [f"{label} output not JSON"], "raw": proc.stdout}
+    if not isinstance(payload, dict):
+        payload = {"status": "fail", "failures": [f"{label} output must be an object"], "raw": proc.stdout}
+    failures = payload.get("failures", [])
+    if not isinstance(failures, list):
+        failures = [str(failures)]
+    if proc.returncode != 0:
+        failures.append(f"{label} exited with code {proc.returncode}")
+        payload["status"] = "fail"
+    elif payload.get("status") not in ("pass", "fail"):
+        failures.append(f"{label} output has invalid status")
+        payload["status"] = "fail"
+    payload["failures"] = failures
+    payload["exit_code"] = proc.returncode
+    if proc.stderr:
+        payload["stderr"] = proc.stderr
+    return payload
+
+
 def _run_validator(story: Path, phase: int, mode: str) -> Dict[str, Any]:
     args = [
         sys.executable,
@@ -48,14 +72,7 @@ def _run_validator(story: Path, phase: int, mode: str) -> Dict[str, Any]:
     if phase >= phase_for_role(mode, "critic"):
         args.append("--require-pass")
     proc = subprocess.run(args, capture_output=True, text=True)
-    try:
-        payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
-    except json.JSONDecodeError:
-        payload = {"status": "fail", "failures": ["validator output not JSON"], "raw": proc.stdout}
-    payload["exit_code"] = proc.returncode
-    if proc.stderr:
-        payload.setdefault("stderr", proc.stderr)
-    return payload
+    return _checked_payload(proc, "validator")
 
 
 def _run_rubric(story: Path, threshold: float) -> Dict[str, Any]:
@@ -73,10 +90,7 @@ def _run_rubric(story: Path, threshold: float) -> Dict[str, Any]:
         "--json",
     ]
     proc = subprocess.run(args, capture_output=True, text=True)
-    try:
-        return json.loads(proc.stdout) if proc.stdout.strip() else {"status": "fail", "raw": proc.stdout}
-    except json.JSONDecodeError:
-        return {"status": "fail", "raw": proc.stdout}
+    return _checked_payload(proc, "rubric")
 
 
 def run_gate(story: Path, phase: int, mode: str, rubric_threshold: float, run_rubric: bool) -> Dict[str, Any]:

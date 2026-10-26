@@ -34,6 +34,7 @@ from storyforge_lib import (
     write_text,
 )
 from run_paths import run_directory
+from source_policy import story_source_access
 from production_normalize import normalize_story
 from approval_snapshots import (approval_snapshot, configuration, outputs, require_approval, snapshot)
 
@@ -242,22 +243,6 @@ def update_story_automation(story: Path, patch: Dict[str, Any]) -> None:
         else:
             automation[key] = value
     write_text(path, yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
-
-
-def story_source_access(story: Path) -> str:
-    manifest = story / "story.yaml"
-    if not manifest.exists():
-        return "trusted_runners_allowed"
-    import yaml
-    try:
-        data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return "denied"
-        if data.get("source_policy", {}).get("access") == "denied":
-            return "denied"
-    except (yaml.YAMLError, AttributeError):
-        return "denied"
-    return "trusted_runners_allowed"
 
 
 def re_search_denied(text: str) -> bool:
