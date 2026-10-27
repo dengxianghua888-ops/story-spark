@@ -105,3 +105,24 @@ successful manual fallback now propagates success. Rewritten diagnostic files
 are recognized by inode and nanosecond modification/change metadata plus content,
 so identical failures from consecutive attempts remain visible while untouched
 older diagnostics are excluded.
+
+## Source authorization at dispatch boundaries
+
+The pipeline rechecks current source access before each phase (including retry),
+before/after runner execution and before publication. The agent dispatcher also
+checks before each external Codex/OpenClaw/Claude provider attempt, including
+fallbacks within the same invocation. It reads both its staged story and the
+live `--source-story` authorization path supplied by the trusted pipeline; neither
+can override a denial or malformed policy in the other. Standalone dispatchers
+default to checking their own story. The live path is not passed to providers or
+inserted into their prompt; it is not reviewer authentication or OS isolation.
+
+Denied access returns 30 and a dispatcher denial marker prevents an old output
+bundle from being relabelled as success. Local mock/manual paths and dry-run
+behavior remain unchanged. This cannot retract an in-flight request or eliminate
+the final check-to-send/exchange race with an uncooperative external writer.
+
+The standalone artifact-apply CLI shares the mode's phase count, including V6
+feedback phase 9. Global invalid integers retain argparse exit 2; mode-range
+errors retain this helper's exit 1 and are rejected before staging or log writes.
+Its syntactic apply contract does not certify semantic or literary quality.

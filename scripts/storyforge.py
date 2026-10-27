@@ -34,7 +34,7 @@ from storyforge_lib import (
     write_text,
 )
 from run_paths import run_directory
-from source_policy import story_source_access
+from source_policy import SourceAccessDenied, require_source_access, story_source_access
 from production_normalize import normalize_story
 from approval_snapshots import (approval_snapshot, configuration, outputs, require_approval, snapshot)
 
@@ -141,7 +141,8 @@ def command_for_runner(runner: str) -> List[str]:
     return [sys.executable, str(ROOT / "scripts" / "runners" / script_map[runner])]
 
 
-def runner_args(runner: str, story: Path, phase: int, prompt: Path, run_dir: Path, model: str, mode: str) -> List[str]:
+def runner_args(runner: str, story: Path, phase: int, prompt: Path, run_dir: Path, model: str, mode: str,
+                *, source_story: Path | None = None) -> List[str]:
     args = command_for_runner(runner)
     args.extend([
         "--story",
@@ -159,6 +160,11 @@ def runner_args(runner: str, story: Path, phase: int, prompt: Path, run_dir: Pat
         args.extend(["--mode", mode])
     if runner in {"codex", "openclaw", "claude"}:
         args.extend(["--providers", runner])
+    if source_story is not None and runner in {"agent", "codex", "openclaw", "claude"}:
+        # The trusted dispatcher reads live authorization only. Providers still
+        # receive staged paths and never receive this live path in their prompt.
+        # Resolve here, before the dispatcher changes to its isolated workspace.
+        args.extend(["--source-story", str(source_story.resolve())])
     return args
 
 
@@ -278,7 +284,14 @@ def validate_phase(story: Path, phase: int, require_pass: bool = False, mode: st
     return run_command([sys.executable, str(ROOT / "scripts" / "validate-story.py"), "--story", str(story), "--phase", phase_arg])
 
 
+def require_runner_source_access(args: argparse.Namespace, *stories: Path) -> None:
+    if not args.dry_run and args.runner in {"agent", "codex", "openclaw", "claude"}:
+        for story in stories:
+            require_source_access(story, args.runner)
+
+
 def run_phase(args: argparse.Namespace, story: Path, run_dir: Path, summary: Path, phase: int, retry: int) -> bool:
+    require_runner_source_access(args, story)
     if args.dry_run:
         started = now_stamp()
         prompt, manifest = render_phase_prompt(story, phase, ROOT, normalize_pipeline_mode(args.mode))
@@ -353,9 +366,11 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
     runner_prompt = runner_dir / prompt_path.name
     write_text(runner_prompt, prompt_text)
     runner_baseline = story_fingerprint(story)
-    runner_cmd = runner_args(args.runner, story, phase, runner_prompt, runner_dir, args.model, mode)
+    runner_cmd = runner_args(args.runner, story, phase, runner_prompt, runner_dir, args.model, mode,
+                             source_story=live_story)
     if phase > phase_for_role(mode, "beat") and not args.no_human_gates and args.runner != "mock":
         require_approval(story, run_dir, ROOT, args)
+    require_runner_source_access(args, live_story, story)
     result, runner_timing = run_command_with_heartbeat(
         runner_cmd,
         run_dir,
@@ -380,6 +395,10 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
         runner_result = json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else {}
     except json.JSONDecodeError:
         runner_result = {}
+    if (args.runner in {"agent", "codex", "openclaw", "claude"}
+            and runner_result.get("source_access_denied") is True):
+        raise SourceAccessDenied(str(runner_result.get("failure_reason", "Source access denied by dispatcher")))
+    require_runner_source_access(args, live_story, story)
     provider = str(runner_result.get("provider", ""))
     output_bundle = Path(runner_result.get("output_bundle", run_dir / f"phase{phase}.model.out"))
     phase_audit = {
@@ -488,6 +507,7 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
         },
     )
     update_manifest(run_dir, {f"phase_{phase}_attempt_backup": str(staged.path)})
+    require_runner_source_access(args, live_story, story)
     try:
         staged.publish()
     except OSError as exc:
@@ -529,6 +549,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
     try:
         with story_write_lock(Path(args.story)):
             return _run_pipeline(args)
+    except SourceAccessDenied as exc:
+        eprint(str(exc))
+        return 30
     except (OSError, ValueError, ImportError) as exc:
         eprint(f"Unable to run safely: {exc}")
         return RUNNER_EXIT_VALIDATION_FAILED
@@ -555,10 +578,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         return 11
 
     # Local previews render inputs only; source approval gates actual runners.
-    if (not args.dry_run and story_source_access(story) == "denied"
-            and args.runner in {"agent", "codex", "openclaw", "claude"}):
-        eprint(f"source_policy.access=denied blocks runner {args.runner}")
-        return 30
+    require_runner_source_access(args, story)
 
     try:
         validate_bundle_schema(ROOT, args.mode)
@@ -602,6 +622,14 @@ def _run_pipeline(args: argparse.Namespace) -> int:
                 return RUNNER_EXIT_HUMAN_GATE
         try:
             ok = run_phase(args, story, run_dir, summary, phase, retry)
+        except SourceAccessDenied as exc:
+            eprint(str(exc))
+            try:
+                update_manifest(run_dir, {"status": "blocked", "source_access": "denied",
+                                          "last_failure": str(exc), "ended_at": now_stamp()})
+            except (OSError, ValueError) as audit_error:
+                eprint(f"Source denied; audit unavailable: {audit_error}")
+            return 30
         except (OSError, ValueError) as exc:
             eprint(f"phase {phase} failed safely: {exc}")
             return RUNNER_EXIT_VALIDATION_FAILED
