@@ -8,17 +8,26 @@ import json
 import sys
 from pathlib import Path
 
-from storyforge_lib import apply_artifact_bundle, repo_root, read_text, write_json
+from storyforge_lib import (apply_artifact_bundle, normalize_pipeline_mode, phase_count,
+                            repo_root, read_text, write_json)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--story", required=True)
-    parser.add_argument("--phase", required=True, type=int, choices=range(1, 9))
+    parser.add_argument("--phase", required=True, type=int, choices=range(1, 10))
     parser.add_argument("--mode", default="v4")
     parser.add_argument("--bundle", required=True, help="Path to model output bundle")
     parser.add_argument("--run-dir", required=True)
     args = parser.parse_args()
+    try:
+        args.mode = normalize_pipeline_mode(args.mode)
+        last_phase = phase_count(args.mode)
+        if not 1 <= args.phase <= last_phase:
+            raise ValueError(f"--phase ({args.phase}) must be within 1-{last_phase} for mode {args.mode}")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     story = Path(args.story)
     bundle = Path(args.bundle)

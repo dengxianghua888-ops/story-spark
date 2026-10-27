@@ -23,6 +23,6 @@ class SourceAccessDenied(ValueError):
     """A source denial is independent of blueprint review or its bypass flag."""
 
 
-def require_source_access(story: Path) -> None:
+def require_source_access(story: Path, runner: str = "codex") -> None:
     if story_source_access(story) == "denied":
-        raise SourceAccessDenied("source_policy.access=denied blocks runner codex")
+        raise SourceAccessDenied(f"source_policy.access=denied blocks runner {runner}")

@@ -15,6 +15,8 @@ from typing import Dict, List, Tuple
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from source_policy import SourceAccessDenied, require_source_access  # noqa: E402
 
 
 def run(args: List[str], prompt: str | None = None, timeout: int = 1800, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -235,6 +237,7 @@ def main() -> int:
     parser.add_argument("--model", default="")
     parser.add_argument("--providers", default="")
     parser.add_argument("--mode", default="v4")
+    parser.add_argument("--source-story", default="", help="Live authorization path supplied by the trusted pipeline")
     args = parser.parse_args()
 
     prompt = Path(args.prompt).read_text(encoding="utf-8")
@@ -244,6 +247,18 @@ def main() -> int:
     last_data: Dict[str, object] | None = None
     selected_providers = provider_list(args.providers, args.phase)
     for provider in selected_providers:
+        if provider in PROVIDERS:
+            try:
+                require_source_access(Path(args.story), provider)
+                require_source_access(Path(args.source_story or args.story), provider)
+            except SourceAccessDenied as exc:
+                data = result(args.phase, "agent", provider, "failed", 30, provider,
+                              time.time(), output_bundle, str(exc))
+                data["source_access_denied"] = True
+                attempts.append(data)
+                append_provider_sentinel(run_dir, args.phase, provider, "blocked", reason=str(exc))
+                last_data = data
+                break
         provider_started = time.time()
         append_provider_sentinel(run_dir, args.phase, provider, "started", output_bundle=str(output_bundle))
         if provider == "mock":
