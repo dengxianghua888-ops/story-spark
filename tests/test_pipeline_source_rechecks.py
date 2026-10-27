@@ -105,6 +105,29 @@ sys.exit(77)
         self.assertEqual(len(self.calls()), 1)
         self.assert_denied()
 
+    def test_relative_story_cli_cannot_fallback_after_source_withdrawal(self):
+        env = dict(self.env, SYNTHETIC_REVOKE="1", SYNTHETIC_FAIL="1",
+                   STORYFORGE_AGENT_PROVIDER_PRIORITY="codex,claude")
+        original = (self.story / "draft.md").read_bytes()
+        result = subprocess.run([
+            sys.executable, str(ROOT / "scripts/storyforge.py"),
+            "run", "--story", "story", "--runner", "agent", "--run-id", "relative-fallback",
+            "--from-phase", "3", "--to-phase", "3", "--max-retries", "0", "--no-human-gates"],
+            cwd=self.base, text=True, capture_output=True, env=env, timeout=30)
+        self.assertEqual(result.returncode, 30, result.stderr)
+        calls = self.calls()
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(calls[0]["phase"], 3)
+        self.assertNotIn("--source-story", calls[0]["argv"])
+        self.assertFalse(calls[0]["live_path_in_prompt"])
+        self.assertEqual((self.story / "draft.md").read_bytes(), original)
+        self.assert_denied()
+        manifest = json.loads((self.story / "runs/relative-fallback/run-manifest.json").read_text())
+        self.assertEqual((manifest["status"], manifest["source_access"]), ("blocked", "denied"))
+        record = json.loads((self.story / "runs/relative-fallback/phase3.runner.log").read_text().splitlines()[-1])
+        self.assertTrue(record["source_access_denied"])
+        self.assertEqual(record["selected_providers"], ["codex", "claude"])
+
     def test_next_phase_checks_current_source_after_completed_phase(self):
         original = storyforge.run_phase
         completed = []

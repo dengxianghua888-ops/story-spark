@@ -163,7 +163,8 @@ def runner_args(runner: str, story: Path, phase: int, prompt: Path, run_dir: Pat
     if source_story is not None and runner in {"agent", "codex", "openclaw", "claude"}:
         # The trusted dispatcher reads live authorization only. Providers still
         # receive staged paths and never receive this live path in their prompt.
-        args.extend(["--source-story", str(source_story)])
+        # Resolve here, before the dispatcher changes to its isolated workspace.
+        args.extend(["--source-story", str(source_story.resolve())])
     return args
 
 
