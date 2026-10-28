@@ -236,6 +236,9 @@ CLI 参数解析仅接受 1–9 的整数;超出该全局范围或非整数会�
 真实外部 runner 在每次阶段、重试、provider fallback 和发布边界复核来源授权。
 运行中撤回来源会退出 30，后续外部请求不会继续，旧稿与失败候选保留；已在途的请求无法撤回。
 此检查独立于 `--no-human-gates`，不改变 dry-run、mock、manual 或 local runner 的既有合同。
+显式设置的 `source_policy.access` 只接受 `trusted_runners_allowed` 或 `denied`；
+空值、错误类型和其他字符串均按拒绝处理，不因格式错误启动外部 runner。
+未设置该字段的历史项目保持原有兼容行为。
 
 **手工模式 vs 自动模式**:
 

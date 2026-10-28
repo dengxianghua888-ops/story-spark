@@ -30,6 +30,7 @@ from scene_context import LEDGER, context_for_batch, scene_order  # noqa: E402
 from storyforge_lib import StagedStory, story_write_lock, now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
 from repairs import repair_fragmentation_and_soft_words  # noqa: E402
 from source_policy import SourceAccessDenied, require_source_access  # noqa: E402
+from run_paths import run_directory  # noqa: E402
 
 
 def count_nonspace(text: str) -> int:
@@ -448,7 +449,6 @@ def main() -> int:
     if args.run_id and (Path(args.run_id).name != args.run_id or args.run_id in {".", ".."}):
         raise ValueError("run ID must be a single directory name")
     run_id = args.run_id or f"scene_batches_{now_stamp().replace(' ', '_').replace(':', '')}"
-    run_dir = story / "runs" / run_id
     # Own the same stable lock as the main pipeline, including approval checks.
     with story_write_lock(story):
         try:
@@ -456,6 +456,7 @@ def main() -> int:
         except SourceAccessDenied as exc:
             print(str(exc), file=sys.stderr)
             return 30
+        run_dir = run_directory(story, run_id)
         check_blueprint_approval(story, args)
         run_dir.mkdir(parents=True, exist_ok=True)
         with StagedStory(story, run_dir, 5) as staged:

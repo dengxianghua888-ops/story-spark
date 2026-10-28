@@ -12,7 +12,12 @@ def story_source_access(story: Path) -> str:
         data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return "denied"
-        if data.get("source_policy", {}).get("access") == "denied":
+        policy = data.get("source_policy", {})
+        if not isinstance(policy, dict):
+            return "denied"
+        # Missing access retains the legacy contract; an explicit value must
+        # match the manifest's enum rather than silently grant on malformed data.
+        if policy.get("access", "trusted_runners_allowed") != "trusted_runners_allowed":
             return "denied"
     except (yaml.YAMLError, AttributeError):
         return "denied"
