@@ -1,5 +1,7 @@
 """Run-path regressions also execute without third-party test dependencies."""
 import sys
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,6 +62,46 @@ class RunPathTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_directory(self.story, "r")
         self.assertEqual(target.read_text(), "keep")
+
+    def test_split_cli_rejects_unsafe_run_paths_before_writes(self):
+        for kind in ("runs-root", "run", "content", "invalid-id"):
+            with self.subTest(kind=kind):
+                story = self.root / kind / "story"
+                story.mkdir(parents=True)
+                (story / "story.yaml").write_text("source_policy:\n  access: trusted_runners_allowed\n")
+                outside = story.parent / "outside"
+                outside.mkdir()
+                (outside / "owner.txt").write_text("OWNER_BYTES")
+                run_id = "attempt"
+                if kind == "runs-root":
+                    (story / "runs").symlink_to(outside, target_is_directory=True)
+                elif kind == "run":
+                    (story / "runs").mkdir()
+                    (story / "runs" / run_id).symlink_to(outside, target_is_directory=True)
+                elif kind == "content":
+                    target = story / "runs" / run_id
+                    target.mkdir(parents=True)
+                    (target / "progress.log").symlink_to(outside / "owner.txt")
+                else:
+                    run_id = "nested\\run"
+                marker = story.parent / "provider-called"
+                binary = story.parent / "bin"
+                binary.mkdir()
+                executable = binary / "codex"
+                executable.write_text(f"#!{sys.executable}\nfrom pathlib import Path\n"
+                                      f"Path({str(marker)!r}).write_text('called')\nraise SystemExit(77)\n")
+                executable.chmod(0o700)
+                result = subprocess.run([
+                    sys.executable, str(Path(__file__).resolve().parents[1] / "scripts/generate_scene_batches.py"),
+                    "--story", str(story), "--run-id", run_id, "--no-human-gates",
+                ], capture_output=True, text=True,
+                    env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ.get("PATH", "")})
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Run", result.stderr)
+                self.assertFalse(marker.exists())
+                self.assertEqual([(p.name, p.read_bytes()) for p in outside.iterdir()],
+                                 [("owner.txt", b"OWNER_BYTES")])
+                self.assertFalse(list(story.parent.glob(".story.attempt-*")))
 
 
 if __name__ == "__main__":

@@ -88,6 +88,33 @@ class SplitSourcePolicyTests(unittest.TestCase):
         self.assertFalse((self.base / "provider-started").exists())
         self.assertFalse((self.story / "runs").exists())
 
+    def test_invalid_explicit_access_never_starts_either_cli_provider(self):
+        for access in ("[denied]", "null", "false", "0", "{}", "unreviewed"):
+            for entry in ("split", "pipeline"):
+                with self.subTest(access=access, entry=entry):
+                    write_text(self.story / "story.yaml", f"source_policy:\n  access: {access}\n")
+                    before = self.artifacts()
+                    self.assertEqual(story_source_access(self.story), "denied")
+                    if entry == "split":
+                        command = [str(ROOT / "scripts/generate_scene_batches.py")]
+                    else:
+                        command = [str(ROOT / "scripts/storyforge.py"), "run",
+                                   "--runner", "codex", "--from-phase", "1", "--to-phase", "1"]
+                    result = subprocess.run([
+                        sys.executable, *command, "--story", str(self.story),
+                        "--run-id", "invalid-policy", "--no-human-gates",
+                    ], env=self.fake_codex(), capture_output=True, text=True, check=False)
+                    self.assertEqual(result.returncode, 30, result.stdout + result.stderr)
+                    self.assertFalse((self.base / "provider-started").exists())
+                    self.assertFalse((self.story / "runs").exists())
+                    self.assertEqual(self.artifacts(), before)
+
+    def test_missing_access_keeps_legacy_policy_contract(self):
+        for text in ("{}", "source_policy: {}", "source_policy:\n  approved_by: legacy\n"):
+            with self.subTest(text=text):
+                write_text(self.story / "story.yaml", text)
+                self.assertEqual(story_source_access(self.story), "trusted_runners_allowed")
+
     def test_explicit_approval_and_legacy_cli_reach_synthetic_provider(self):
         for text in ("source_policy:\n  access: trusted_runners_allowed\n", None):
             with self.subTest(text=text):
