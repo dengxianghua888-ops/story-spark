@@ -294,6 +294,12 @@ python3 scripts/apply-human-calibration.py --slug hermes_customs_package
 python3 scripts/update-corpus-index.py
 ```
 
+`run-corpus-phase1-parallel.py --timeout-seconds` 超时会记录 `exit_code: 124`、
+`timed_out: true` 和已捕获的文本日志，其他故事继续完成并汇总。
+在 Linux/macOS 上，每个故事在独立进程会话运行；超时时终止该进程组内的产线及 runner，
+不影响其他故事，也不自动重试。已脱离该进程组的程序与服务端已收到的请求不在此终止保证内；
+超时不证明远端请求已取消或退款，重跑前应核查已有结果与状态。
+
 ### 批量仿写
 
 ```bash

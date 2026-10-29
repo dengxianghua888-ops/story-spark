@@ -7,6 +7,8 @@ import argparse
 import concurrent.futures as futures
 import datetime as dt
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -96,23 +98,36 @@ def run_one(row: dict[str, Any], runner: str, model: str, timeout: int, heartbea
     ]
     if model:
         cmd.extend(["--model", model])
-    try:
-        completed = subprocess.run(
+    with subprocess.Popen(
             cmd,
             cwd=ROOT,
             text=True,
-            capture_output=True,
-            timeout=timeout if timeout > 0 else None,
-        )
-        exit_code = completed.returncode
-        stdout = completed.stdout
-        stderr = completed.stderr
-        timed_out = False
-    except subprocess.TimeoutExpired as exc:
-        exit_code = 124
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        timed_out = True
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            # This dispatcher is threaded: do not use preexec_fn=os.setsid.
+            start_new_session=os.name == "posix",
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout if timeout > 0 else None)
+            exit_code = process.returncode
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            # Kill only this invocation's session group, including its runner.
+            # Killing the pipeline parent alone leaves descendants running.
+            if os.name == "posix":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            # communicate() reaps the parent and returns decoded full streams.
+            # TimeoutExpired.output itself is bytes even when text=True.
+            stdout, stderr = process.communicate()
+            exit_code = 124
+            timed_out = True
 
     ok = exit_code == 0 and (Path(row["story"]) / "dissection.md").exists()
     return {
