@@ -89,6 +89,37 @@ class CorpusParallelTimeoutTests(unittest.TestCase):
         self.assertEqual(result["stderr_tail"], "stderr\n")
         json.dumps(result)
 
+    @unittest.skipUnless(os.name == "posix", "process groups are the POSIX runner contract")
+    def test_detached_pipe_owner_does_not_block_timeout_result(self):
+        ready = self.root / "detached-ready"
+        release = self.root / "release-detached"
+        finished = self.root / "detached-finished"
+        child = ("import pathlib,time\nready=pathlib.Path(" + repr(str(ready)) + ")\n"
+                 "release=pathlib.Path(" + repr(str(release)) + ")\n"
+                 "ready.write_text('ready')\ndeadline=time.monotonic()+5\n"
+                 "while not release.exists() and time.monotonic()<deadline:time.sleep(0.02)\n"
+                 "pathlib.Path(" + repr(str(finished)) + ").write_text('finished')\n")
+        self.script("import os,subprocess,sys,time\nsubprocess.Popen([sys.executable,'-c'," +
+                    repr(child) + "],start_new_session=True)\nos.write(1,b'partial detached\\xe4')\n"
+                    "os.write(2,b'partial stderr\\xe4')\ntime.sleep(10)\n")
+        try:
+            result = self.run_one(timeout=1)
+            self.assertTrue(ready.exists(), "detached local child must actually have started")
+            self.assertFalse(finished.exists(), "result must return while the detached pipe owner is still waiting")
+            self.assertTrue(result["timed_out"])
+            self.assertEqual(result["exit_code"], 124)
+            self.assertEqual(result["stdout_tail"], "partial detached\ufffd")
+            self.assertEqual(result["stderr_tail"], "partial stderr\ufffd")
+            json.dumps(result)
+        finally:
+            # The detached child is outside the group's termination promise.
+            # Let only our finite fixture exit naturally; do not signal its group.
+            release.touch()
+            deadline = time.monotonic() + 5
+            while not finished.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(finished.exists())
+
     def test_nonzero_exit_and_missing_dissection_do_not_count_as_success(self):
         for code in [0, 7]:
             with self.subTest(code=code):

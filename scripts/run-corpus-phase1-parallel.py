@@ -123,9 +123,16 @@ def run_one(row: dict[str, Any], runner: str, model: str, timeout: int, heartbea
                     pass
             else:
                 process.kill()
-            # communicate() reaps the parent and returns decoded full streams.
+            # An escaped descendant may keep a pipe open. Bound log draining;
             # TimeoutExpired.output itself is bytes even when text=True.
-            stdout, stderr = process.communicate()
+            try:
+                stdout, stderr = process.communicate(timeout=1)
+            except subprocess.TimeoutExpired as exc:
+                stdout = (exc.stdout or b"").decode("utf-8", errors="replace")
+                stderr = (exc.stderr or b"").decode("utf-8", errors="replace")
+                process.stdout.close()
+                process.stderr.close()
+                process.wait()
             exit_code = 124
             timed_out = True
 
