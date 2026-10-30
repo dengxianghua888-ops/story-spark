@@ -14,6 +14,8 @@ import contextlib
 import datetime as dt
 import hashlib
 import json
+import os
+import stat
 import sys
 import zipfile
 from pathlib import Path
@@ -229,9 +231,46 @@ def iter_txt_members(zip_path: Path):
             yield info, decoded_name, archive.read(info)
 
 
+@contextlib.contextmanager
+def corpus_import_lock(corpus: Path):
+    """One cooperative ZIP writer per canonical corpus; retain the stable inode."""
+    try:
+        import fcntl
+    except ImportError as exc:
+        raise ValueError("ZIP import writing requires POSIX flock support") from exc
+    corpus.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = corpus.parent / f".{corpus.name}.corpus-import.lock"
+    try:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise ValueError("ZIP import lock must be a regular non-symlink file") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("ZIP import lock must be a regular non-symlink file")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("Corpus already has an active ZIP importer; retry after it finishes") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
                     encoding: str | None = None) -> dict[str, object]:
     encoding = text_encoding(encoding)
+    corpus = corpus.resolve()
+    if dry_run:
+        return _import_archives(zip_paths, corpus, True, encoding)
+    with corpus_import_lock(corpus):
+        return _import_archives(zip_paths, corpus, False, encoding)
+
+
+def _import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
+                     encoding: str | None) -> dict[str, object]:
     corpus.mkdir(parents=True, exist_ok=True)
     manifest_path = corpus / "_manifest.tsv"
     manifest_lines, manifest_slugs = load_manifest(manifest_path)
