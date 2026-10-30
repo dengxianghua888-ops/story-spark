@@ -262,10 +262,10 @@ def corpus_import_lock(corpus: Path):
 def import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
                     encoding: str | None = None) -> dict[str, object]:
     encoding = text_encoding(encoding)
-    corpus = corpus.resolve()
     if dry_run:
         return _import_archives(zip_paths, corpus, True, encoding)
-    with corpus_import_lock(corpus):
+    # Canonicalize only the lock identity; preserve callers' existing I/O paths.
+    with corpus_import_lock(corpus.resolve()):
         return _import_archives(zip_paths, corpus, False, encoding)
 
 

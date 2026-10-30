@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 import zipfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 IMPORTER = ROOT / 'scripts/import-corpus-zips.py'
@@ -123,7 +124,20 @@ class CorpusImportConcurrencyTests(unittest.TestCase):
             self.finish_owner(process, release)
         self.assertTrue(lock.is_file())
         self.assertEqual(lock.stat().st_ino, inode)
+        before_manifest = (alias / '_manifest.tsv').read_bytes()
+        write = importer.write_text
+
+        def fail_alias_manifest(path, text):
+            if path == alias / '_manifest.tsv':
+                raise OSError('synthetic alias manifest write failure')
+            return write(path, text)
+
+        with patch.object(importer, 'write_text', fail_alias_manifest):
+            with self.assertRaisesRegex(OSError, 'alias manifest write failure'):
+                importer.import_archives([self.archives[1]], alias, False)
+        self.assertEqual((alias / '_manifest.tsv').read_bytes(), before_manifest)
         self.assertEqual(self.cli(self.archives[1], alias).returncode, 0)
+        self.assertEqual(len((alias / '_manifest.tsv').read_text().splitlines()[1:]), 2)
         self.assertEqual(lock.stat().st_ino, inode)
 
     def test_unsafe_lock_targets_are_rejected_without_truncating_or_importing(self):
