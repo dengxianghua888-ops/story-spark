@@ -294,6 +294,22 @@ python3 scripts/apply-human-calibration.py --slug hermes_customs_package
 python3 scripts/update-corpus-index.py
 ```
 
+ZIP 导入在 Linux/macOS 使用 corpus 规范路径对应的同父目录稳定锁文件
+`.目录名.corpus-import.lock`，从扫描、恢复清单到写源文和提交 manifest 只允许一个合作导入进程。
+已有导入运行时，另一个写入调用在改 corpus 文件前以退出码 2 拒绝；请等原调用结束后显式重跑，
+继续使用原有去重与失败恢复。锁文件不截断或删除；软链/非普通锁文件会拒绝。
+相对路径、绝对路径和指向同一 corpus 的软链别名共享锁身份。`--dry-run` 不取得写锁，
+仅报告观察到的预览，不承诺并发写入期间的一致快照。
+此锁仅协调使用当前 ZIP 导入器的单机 POSIX 进程，不覆盖旧版本、`build-corpus.sh`、
+索引脚本或手工编辑，也不是跨文件事务或对不合作文件写入者的隔离；运行这些写入前仍须停止导入。
+
+`run-corpus-phase1-parallel.py --timeout-seconds` 超时会记录 `exit_code: 124`、
+`timed_out: true` 和已捕获的文本日志，其他故事继续完成并汇总。
+在 Linux/macOS 上，每个故事在独立进程会话运行；超时时终止该进程组内的产线及 runner，
+不影响其他故事，也不自动重试。已脱离该进程组的程序与服务端已收到的请求不在此终止保证内；
+终止后最多额外收集一秒日志；脱组程序仍持有输出管道时，保留已捕获部分并关闭本次收集管道。
+超时不证明远端请求已取消或退款，重跑前应核查已有结果与状态。
+
 ### 批量仿写
 
 ```bash
