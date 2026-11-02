@@ -119,7 +119,15 @@ def load_manifest(manifest_path: Path) -> tuple[list[str], set[str]]:
     return lines, slugs
 
 
+def validate_manifest_filename(filename: str) -> None:
+    # Consumers use splitlines() and tab-delimited fields, not CSV quoting.
+    # Reject rather than silently rename a source or corrupt its manifest row.
+    if any(char in filename for char in "\t\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"):
+        raise ValueError("Source filename contains a TSV separator; rename it before importing")
+
+
 def append_manifest_row(lines: list[str], slug: str, filename: str, word_count: int) -> None:
+    validate_manifest_filename(filename)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
     lines.append(f"{slug}\t{filename}\t{word_count}\tpending\n")
@@ -148,7 +156,7 @@ def recover_manifest(corpus: Path, lines: list[str], slugs: set[str]) -> list[di
             continue
         metadata = {}
         try:
-            for line in text[4:end].splitlines():
+            for line in text[4:end].split("\n"):
                 key, separator, value = line.partition(": ")
                 if separator:
                     metadata[key] = json.loads(value)
@@ -271,11 +279,12 @@ def import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
 
 def _import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
                      encoding: str | None) -> dict[str, object]:
-    corpus.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        corpus.mkdir(parents=True, exist_ok=True)
     manifest_path = corpus / "_manifest.tsv"
     manifest_lines, manifest_slugs = load_manifest(manifest_path)
     recovered = recover_manifest(corpus, manifest_lines, manifest_slugs)
-    used_slugs = manifest_slugs | {path.name for path in corpus.iterdir()}
+    used_slugs = manifest_slugs | ({path.name for path in corpus.iterdir()} if corpus.exists() else set())
     existing_hashes = load_existing_fingerprints(corpus)
     imported_at = dt.datetime.now().isoformat(timespec="seconds")
 
@@ -295,12 +304,13 @@ def _import_archives(zip_paths: list[Path], corpus: Path, dry_run: bool,
 
         for _info, member_name, data in members:
             try:
+                title = Path(member_name).stem
+                validate_manifest_filename(title + ".txt")
                 text = decode_text(data, encoding)
             except (UnicodeError, ValueError) as exc:
                 errors.append({"archive": str(zip_path), "member": member_name, "error": str(exc)})
                 continue
             digest = fingerprint(text)
-            title = Path(member_name).stem
             if digest in existing_hashes:
                 duplicates.append(
                     {

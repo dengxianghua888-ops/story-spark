@@ -16,12 +16,27 @@ different filename for the same text. Existing manifest rows and their status
 values are preserved, and existing source bodies are never rewritten.
 
 `--dry-run` reports candidate imports and rows to recover without writing source
-or manifest files. Existing directories, including leftovers from a terminated
+or manifest files, creating directories, or acquiring the import write lock.
+Existing directories, including leftovers from a terminated
 write, reserve their slug names; new imports receive a suffix rather than
 overwriting their contents. Legacy sources without the importer's provenance
 and malformed provenance do not receive guessed metadata. Recovery cannot
 authenticate or reconstruct a body that was already truncated by an older
 version or later modified by another writer.
+
+The manifest is a plain four-column TSV, consumed with tab splitting and
+`splitlines()`, not CSV quoting. A source filename containing a tab or any
+`splitlines()` line separator cannot be represented safely. Such ZIP members
+are reported in `errors` before a source is created; other valid members still
+import. Rename the affected member and retry. A complete legacy source with
+such a filename in its JSON provenance stops recovery with a clear error,
+preserving source and manifest bytes. Existing malformed TSV rows are not
+automatically repaired because their intended field boundaries are unknown.
+The real importer may still create its stable lock file before this error.
+
+Run `python -m pytest tests/test_corpus_manifest_boundaries.py -q` for synthetic
+filename and non-mutating-preview regressions. No source text, model, account,
+or paid service is used in these tests.
 
 The defect affected missing `filename` and `word_count` metadata. The index
 builder still scans corpus directories, so this is not a claim that an omitted
