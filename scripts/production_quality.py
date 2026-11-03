@@ -256,6 +256,25 @@ def chapter_files(story: Path) -> List[Path]:
     return sorted(path for path in (story / "final-chapters").glob("ch*.md") if path.is_file())
 
 
+def chapter_text_consistency(text: str, chapters: List[Path]) -> Dict[str, Any]:
+    """Bind delivered chapter bodies to final.md, ignoring packaging whitespace.
+
+    The final-packager contract uses H2 第N章 headings after the title/guide.
+    Chapter files may carry their own leading Markdown heading.
+    """
+    bodies = re.split(r"^##[ \t]*第[ \t]*[一二三四五六七八九十百千\d]+[ \t]*章[^\n]*$", text, flags=re.MULTILINE)[1:]
+    mismatches = []
+    for index, (body, path) in enumerate(zip(bodies, chapters), start=1):
+        chapter = path.read_text(encoding="utf-8").strip()
+        without_heading = re.sub(r"^#{1,3}[ \t]+[^\n]*(?:\n|$)", "", chapter, count=1)
+        candidates = {normalize_text(chapter), normalize_text(without_heading)}
+        if normalize_text(body) not in candidates:
+            mismatches.append(index)
+    matches = bool(chapters) and len(bodies) == len(chapters) and not mismatches
+    return {"status": "pass" if matches else "fail", "final_count": len(bodies),
+            "file_count": len(chapters), "mismatched_chapters": mismatches}
+
+
 def chapter_hook_coverage(story: Path) -> Tuple[int, int, float]:
     chapters = chapter_files(story)
     map_path = story / "final-chapters" / "_chapters-map.md"
@@ -901,10 +920,12 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
         hook_hits, chapter_count, hook_coverage = chapter_hook_coverage(story)
         chapters = chapter_files(story)
         chapter_lengths = [count_nonspace(path.read_text(encoding="utf-8")) for path in chapters]
+        chapter_consistency = chapter_text_consistency(text, chapters)
     else:
         hook_hits, chapter_count, hook_coverage = 0, 0, 0.0
         chapters = []
         chapter_lengths = []
+        chapter_consistency = {"status": "pass", "applicable": False}
     source_text = (story / "source.md").read_text(encoding="utf-8") if (story / "source.md").exists() else ""
     overlap = max_common_substring_len(source_text, text) if source_text and text else 0
     repeated = max_repeated_substring_len(text) if text else 0
@@ -945,6 +966,8 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
             failures.append("visible_paywall_labels: final.md must not expose internal 付费节点/付费卡点 labels")
         if not chapters:
             failures.append("chapters: final-chapters/ch*.md missing")
+        if chapter_consistency["status"] != "pass":
+            failures.append("chapter_text_consistency: final-chapters bodies must match final.md chapters in order")
         if hook_coverage < 1.0:
             failures.append(f"chapter_hooks: coverage {hook_coverage} below 1.0")
         for index, length in enumerate(chapter_lengths, start=1):
@@ -985,7 +1008,8 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
             "hook_hits": hook_hits,
             "hook_coverage": hook_coverage,
             "lengths": chapter_lengths,
-            "status": "pass" if phase < phase_for_role(mode, "final") or (chapter_count > 0 and hook_coverage >= 1.0) else "fail",
+            "text_consistency": chapter_consistency,
+            "status": "pass" if phase < phase_for_role(mode, "final") or (chapter_count > 0 and hook_coverage >= 1.0 and chapter_consistency["status"] == "pass") else "fail",
         },
         "paywall_cards": {
             "required": paywall_required,
@@ -1098,7 +1122,7 @@ def validate_quality_report_against_machine(story: Path, metrics: Dict[str, Any]
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (not isinstance(value, float) or math.isfinite(value))
 
 
 def _status(value: Any) -> str:

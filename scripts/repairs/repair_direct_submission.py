@@ -51,38 +51,13 @@ def _count_paywall_rows(section: str) -> int:
     return rows
 
 
-def _ensure_paywall_rows(path: Path, final_chars: int) -> bool:
-    if not path.exists():
-        return False
+def _paywall_review(path: Path, final_chars: int) -> Dict[str, Any]:
+    """Missing creative content needs editorial evidence, not fabricated rows."""
     required = max(1, math.ceil(max(final_chars, 10000) / 3500))
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
     bounds = _paywall_section_bounds(text)
-    if bounds is None:
-        addition = (
-            "\n\n## 付费节点地图（直接投稿版）\n\n"
-            "| 节点 | 建议位置 | 截断类型 | 付费拉力 |\n"
-            "|---|---|---|---|\n"
-        )
-        text = text.rstrip() + addition
-        bounds = _paywall_section_bounds(text)
-    if bounds is None:
-        return False
-    start, end = bounds
-    section = text[start:end]
-    current = _count_paywall_rows(section)
-    if current >= required:
-        return False
-
-    rows = []
-    for index in range(current + 1, required + 1):
-        rows.append(
-            f"| {index} | 第14章末 | 圆满回环前最后一击 | "
-            "龙凤胎满月宴与同权信托落地，弹幕收束原来被接回家的，一直是他 |"
-        )
-    insert = ("\n" if section.endswith("\n") else "\n") + "\n".join(rows) + "\n"
-    text = text[:end].rstrip() + insert + text[end:]
-    path.write_text(text.rstrip() + "\n", encoding="utf-8")
-    return True
+    actual = _count_paywall_rows(text[bounds[0]:bounds[1]]) if bounds else 0
+    return {"required": required, "actual": actual}
 
 
 def run(story: Path, mode: str = "production") -> Dict[str, Any]:
@@ -92,10 +67,12 @@ def run(story: Path, mode: str = "production") -> Dict[str, Any]:
     if _fix_final_headings(final_path):
         changes.append("chapter_headings_h1_to_h2")
     final_chars = _count_nonspace(final_path.read_text(encoding="utf-8")) if final_path.exists() else 0
-    if _ensure_paywall_rows(submission_path, final_chars):
-        changes.append("paywall_map_rows_extended")
+    paywall = _paywall_review(submission_path, final_chars)
+    needs_review = paywall["actual"] < paywall["required"]
     return {
         "name": "direct_submission",
-        "status": "ok",
+        "status": "manual_review_required" if needs_review else "ok",
+        "paywall_map": paywall,
+        "manual_review": ["Add natural paywall nodes grounded in this story; submission text was left unchanged."] if needs_review else [],
         "changes": changes,
     }
