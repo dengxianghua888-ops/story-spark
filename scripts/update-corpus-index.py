@@ -267,7 +267,8 @@ def main():
         "v4_human_reviewed_at",
     ]
 
-    write_text(index_path, json.dumps(idx, ensure_ascii=False, indent=2))
+    # Preserve the original open("w") behavior when the index is a symlink.
+    write_text(index_path.resolve(), json.dumps(idx, ensure_ascii=False, indent=2))
 
     print(f"索引已更新: {index_path}")
     print(f"  总条目: {len(entries)}")
