@@ -24,11 +24,14 @@ dissection.md 必须包含以下块(由 prompts/dissector.md V3 产出):
 
 import argparse
 import json
+import os
+import stat
 import re
 import sys
 from pathlib import Path
 
 from v4_quality import load_human_calibration
+from storyforge_lib import write_text
 
 
 def parse_dissection(text: str) -> dict:
@@ -266,8 +269,18 @@ def main():
         "v4_human_reviewed_at",
     ]
 
-    with index_path.open("w", encoding="utf-8") as f:
-        json.dump(idx, f, ensure_ascii=False, indent=2)
+    # Preserve the original open("w") behavior when the index is a symlink.
+    target = index_path.resolve()
+    if target.exists():
+        original = target.stat()
+        if hasattr(os, "listxattr") and os.listxattr(target):
+            raise OSError(f"Refusing to replace index with extended attributes: {target}")
+        if hasattr(os, "geteuid"):
+            parent = target.parent.stat()
+            expected_gid = parent.st_gid if parent.st_mode & stat.S_ISGID else os.getegid()
+            if original.st_uid != os.geteuid() or original.st_gid != expected_gid:
+                raise OSError(f"Refusing to change index ownership: {target}")
+    write_text(target, json.dumps(idx, ensure_ascii=False, indent=2))
 
     print(f"索引已更新: {index_path}")
     print(f"  总条目: {len(entries)}")

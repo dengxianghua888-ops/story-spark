@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import math
 import re
 from pathlib import Path
 from typing import Any, Dict
+
+from production_quality import count_paywall_rows, required_paywall_nodes, target_range
 
 
 def _count_nonspace(text: str) -> int:
@@ -38,51 +39,13 @@ def _paywall_section_bounds(text: str) -> tuple[int, int] | None:
     return start, end
 
 
-def _count_paywall_rows(section: str) -> int:
-    rows = 0
-    for raw in section.splitlines():
-        line = raw.strip()
-        if not line.startswith("|") or "---" in line:
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if not cells or cells[0] in {"节点", "序号"}:
-            continue
-        rows += 1
-    return rows
-
-
-def _ensure_paywall_rows(path: Path, final_chars: int) -> bool:
-    if not path.exists():
-        return False
-    required = max(1, math.ceil(max(final_chars, 10000) / 3500))
-    text = path.read_text(encoding="utf-8")
+def _paywall_review(path: Path, final_chars: int, target_min: int) -> Dict[str, Any]:
+    """Missing creative content needs editorial evidence, not fabricated rows."""
+    required = required_paywall_nodes(final_chars, target_min)
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
     bounds = _paywall_section_bounds(text)
-    if bounds is None:
-        addition = (
-            "\n\n## 付费节点地图（直接投稿版）\n\n"
-            "| 节点 | 建议位置 | 截断类型 | 付费拉力 |\n"
-            "|---|---|---|---|\n"
-        )
-        text = text.rstrip() + addition
-        bounds = _paywall_section_bounds(text)
-    if bounds is None:
-        return False
-    start, end = bounds
-    section = text[start:end]
-    current = _count_paywall_rows(section)
-    if current >= required:
-        return False
-
-    rows = []
-    for index in range(current + 1, required + 1):
-        rows.append(
-            f"| {index} | 第14章末 | 圆满回环前最后一击 | "
-            "龙凤胎满月宴与同权信托落地，弹幕收束原来被接回家的，一直是他 |"
-        )
-    insert = ("\n" if section.endswith("\n") else "\n") + "\n".join(rows) + "\n"
-    text = text[:end].rstrip() + insert + text[end:]
-    path.write_text(text.rstrip() + "\n", encoding="utf-8")
-    return True
+    actual = count_paywall_rows(text[bounds[0]:bounds[1]]) if bounds else 0
+    return {"required": required, "actual": actual}
 
 
 def run(story: Path, mode: str = "production") -> Dict[str, Any]:
@@ -92,10 +55,13 @@ def run(story: Path, mode: str = "production") -> Dict[str, Any]:
     if _fix_final_headings(final_path):
         changes.append("chapter_headings_h1_to_h2")
     final_chars = _count_nonspace(final_path.read_text(encoding="utf-8")) if final_path.exists() else 0
-    if _ensure_paywall_rows(submission_path, final_chars):
-        changes.append("paywall_map_rows_extended")
+    target = target_range(story, mode)
+    paywall = _paywall_review(submission_path, final_chars, target["target_min"])
+    needs_review = paywall["actual"] < paywall["required"]
     return {
         "name": "direct_submission",
-        "status": "ok",
+        "status": "manual_review_required" if needs_review else "ok",
+        "paywall_map": paywall,
+        "manual_review": ["Add natural paywall nodes grounded in this story; submission text was left unchanged."] if needs_review else [],
         "changes": changes,
     }

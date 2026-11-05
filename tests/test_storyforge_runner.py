@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from test_production_quality import direct_submission_final, add_common_production_artifacts, count_nonspace, make_story_text, split_story_text, write_bundle
+from test_production_quality import direct_submission_final, add_common_production_artifacts, count_nonspace, make_story_text, split_story_text, write_bundle, submission_with_paywall_map
 
 
 def run_storyforge(*args, env=None):
@@ -330,7 +330,7 @@ def test_storyforge_phase7_fallback_repacks_overlong_chapters_from_scenes(tmp_pa
     phase7_files = {
         "final.md": direct_submission_final(chunks),
         "craft-notes.md": "# craft\n",
-        "tomato-submission.md": "# submission\n",
+        "tomato-submission.md": submission_with_paywall_map(4),
         "story.yaml": "slug: phase7_fallback_story\npipeline_mode: production\nstatus: final\n",
         "final-chapters/_chapters-map.md": "| 章 | 字数 | 本章悬念 |\n|---|---:|---|\n| 01 | 1300 | 下一章 |\n",
         "final-chapters/ch01.md": overlong,

@@ -201,6 +201,10 @@ def test_v6_bad_replacement_final_is_checked_and_not_published(tmp_path):
     before = tree_bytes(story)
     files = lib.parse_artifact_bundle((fixtures / "phase8.bundle.txt").read_text())
     files["final.md"] = files["final.md"].replace("闻夏", "张三")
+    # Keep delivered chapter bodies coherent so this still exercises the rubric.
+    for name in files:
+        if name.startswith("final-chapters/ch"):
+            files[name] = files[name].replace("闻夏", "张三")
     write_bundle(fixtures / "phase8.bundle.txt", files)
     result = run_storyforge(*args, "--run-id", "replacement", "--from-phase", 8,
                            "--rubric-threshold", 10, env=env)
