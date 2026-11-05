@@ -21,6 +21,12 @@ Pydantic v2.12.3 uses `FiniteFloat = Annotated[float, AllowInfNan(False)]` to se
 
 The chapter comparison and non-invention behavior follow this repository's existing delivery format and repair conventions. No external service receives manuscripts or private material.
 
+## Mode-aware paywall requirements (2026-11-05)
+
+The direct-submission repair and machine evaluator share the node-count calculation and resolve the same `target_range(story, mode)`. Requirements are `max(1, ceil(max(final_chars, target_min) / 3500))`, not a fixed 10,000-character floor. This preserves production's floor and configured target minima, uses the ultra-short minimum, and follows V6's source-derived minimum. Missing or insufficient maps still require editorial review, without changing submission content.
+
+`tests/test_submission_mode_thresholds.py` covers all three modes through the real repair/validator gate, including complete, insufficient and missing maps, configured minima, source-derived V6 minima, empty text and exact 3,500-character boundaries. The gate tests disable the optional rubric; these are deterministic packaging regressions, not literary-quality or live-model acceptance.
+
 ## Corpus index write safety (2026-11-05)
 
 `update-corpus-index.py` serializes the rebuilt index before using the existing same-directory atomic writer. A write or replacement failure leaves the previous index in place; temporary files are cleaned up existing file mode is retained, and an index symlink continues to point to its target. Files with extended attributes or ownership that cannot be preserved are rejected rather than silently changed. This does not serialize concurrent index builders or guarantee persistence across power loss. The index is still derived from the corpus, not a backup of the source stories. `tests/test_corpus_index_atomic.py` covers replacement failure, cleanup, normal rebuild and file mode.

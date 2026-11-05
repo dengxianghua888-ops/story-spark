@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import math
 import re
 from pathlib import Path
 from typing import Any, Dict
+
+from production_quality import required_paywall_nodes, target_range
 
 
 def _count_nonspace(text: str) -> int:
@@ -51,9 +52,9 @@ def _count_paywall_rows(section: str) -> int:
     return rows
 
 
-def _paywall_review(path: Path, final_chars: int) -> Dict[str, Any]:
+def _paywall_review(path: Path, final_chars: int, target_min: int) -> Dict[str, Any]:
     """Missing creative content needs editorial evidence, not fabricated rows."""
-    required = max(1, math.ceil(max(final_chars, 10000) / 3500))
+    required = required_paywall_nodes(final_chars, target_min)
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     bounds = _paywall_section_bounds(text)
     actual = _count_paywall_rows(text[bounds[0]:bounds[1]]) if bounds else 0
@@ -67,7 +68,8 @@ def run(story: Path, mode: str = "production") -> Dict[str, Any]:
     if _fix_final_headings(final_path):
         changes.append("chapter_headings_h1_to_h2")
     final_chars = _count_nonspace(final_path.read_text(encoding="utf-8")) if final_path.exists() else 0
-    paywall = _paywall_review(submission_path, final_chars)
+    target = target_range(story, mode)
+    paywall = _paywall_review(submission_path, final_chars, target["target_min"])
     needs_review = paywall["actual"] < paywall["required"]
     return {
         "name": "direct_submission",

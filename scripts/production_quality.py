@@ -455,6 +455,11 @@ def target_range(story: Path, mode: str) -> Dict[str, int]:
     return defaults
 
 
+def required_paywall_nodes(chars: int, target_min: int) -> int:
+    """Use the same length floor for validation and editorial repair checks."""
+    return max(1, math.ceil(max(chars, target_min) / 3500))
+
+
 def count_paywall_cards(story: Path) -> int:
     count = 0
     beat_bible = load_beat_bible(story)
@@ -908,7 +913,7 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
     soft_hits = count_hits(text, policy.get("soft_forbidden", []))
 
     paywall_actual = count_paywall_cards(story)
-    paywall_required = max(1, math.ceil(max(chars, target["target_min"]) / 3500))
+    paywall_required = required_paywall_nodes(chars, target["target_min"])
     direct_submission = direct_submission_metrics(story, text, paywall_required) if phase >= phase_for_role(mode, "final") else {
         "status": "pass",
         "opening_guide": {"status": "pass"},
