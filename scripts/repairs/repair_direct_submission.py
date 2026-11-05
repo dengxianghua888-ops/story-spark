@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-from production_quality import required_paywall_nodes, target_range
+from production_quality import count_paywall_rows, required_paywall_nodes, target_range
 
 
 def _count_nonspace(text: str) -> int:
@@ -39,25 +39,12 @@ def _paywall_section_bounds(text: str) -> tuple[int, int] | None:
     return start, end
 
 
-def _count_paywall_rows(section: str) -> int:
-    rows = 0
-    for raw in section.splitlines():
-        line = raw.strip()
-        if not line.startswith("|") or "---" in line:
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if not cells or cells[0] in {"节点", "序号"}:
-            continue
-        rows += 1
-    return rows
-
-
 def _paywall_review(path: Path, final_chars: int, target_min: int) -> Dict[str, Any]:
     """Missing creative content needs editorial evidence, not fabricated rows."""
     required = required_paywall_nodes(final_chars, target_min)
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     bounds = _paywall_section_bounds(text)
-    actual = _count_paywall_rows(text[bounds[0]:bounds[1]]) if bounds else 0
+    actual = count_paywall_rows(text[bounds[0]:bounds[1]]) if bounds else 0
     return {"required": required, "actual": actual}
 
 

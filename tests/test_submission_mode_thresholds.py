@@ -99,3 +99,38 @@ def test_repair_threshold_matches_machine_at_boundaries(tmp_path, mode, chars, t
     assert repaired["status"] == "ok"
     write(tmp_path / "tomato-submission.md", submission_with_paywall_map(required - 1))
     assert repair_submission(tmp_path, mode)["status"] == "manual_review_required"
+
+
+@pytest.mark.parametrize("separator", [
+    "|---|---|---|",
+    "| :--- | ---: | :---: |",
+    "| :-----: | :--- | ----: |",
+])
+@pytest.mark.parametrize("complete", [True, False])
+def test_gate_counts_hyphens_in_content_but_not_table_separators(tmp_path, separator, complete):
+    prepare_story(tmp_path, "ultra_short", 6300)
+    original = ("## 付费节点地图（直接投稿版）\n\n| 节点 | 位置 | 自然卡点 |\n"
+                + separator + "\n| 1 | 第一章末 | 信号---突然中断 |\n")
+    if complete:
+        original += "| 2 | 第二章末 | 新证据出现 |\n"
+    # Neither a separator nor rows in the following section may supply a node.
+    original += "\n## 其他材料\n\n| 3 | 第三章末 | 与节点地图无关 |\n"
+    write(tmp_path / "tomato-submission.md", original)
+    expected = 2 if complete else 1
+    metrics = machine_evaluate(tmp_path, 7, "ultra_short")
+    assert metrics["direct_submission"]["submission_paywall_map"]["actual"] == expected
+    if complete:
+        assert metrics["failures"] == []
+
+    result = run_gate(tmp_path, 7, "ultra_short", 7, False)
+    direct = next(item for item in result["repairs"]["results"] if item["name"] == "direct_submission")
+    assert direct["paywall_map"] == {"required": 2, "actual": expected}
+    if complete:
+        assert result["validator"]["status"] == "pass", result["failures"]
+        assert direct["status"] == "ok"
+        assert result["status"] == "pass", result["failures"]
+    else:
+        assert direct["status"] == "manual_review_required"
+        assert result["status"] != "pass"
+        assert any("submission_paywall_map" in failure for failure in result["failures"])
+    assert (tmp_path / "tomato-submission.md").read_text(encoding="utf-8") == original

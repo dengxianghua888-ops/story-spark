@@ -366,6 +366,22 @@ def mobile_paragraph_metrics(text: str) -> Dict[str, Any]:
     }
 
 
+def count_paywall_rows(section: str) -> int:
+    """Count data rows; only all-separator cells form a table delimiter row."""
+    rows = 0
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        if cells[0] in {"节点", "序号"}:
+            continue
+        rows += 1
+    return rows
+
+
 def submission_paywall_map_metrics(story: Path, required: int) -> Dict[str, Any]:
     path = story / "tomato-submission.md"
     if not path.exists():
@@ -378,19 +394,8 @@ def submission_paywall_map_metrics(story: Path, required: int) -> Dict[str, Any]
     next_heading = re.search(r"\n##+\s+", section)
     if next_heading:
         section = section[: next_heading.start()]
-    table_rows = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if not cells or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
-            continue
-        if cells[0] in {"节点", "序号"}:
-            continue
-        table_rows.append(stripped)
     chapter_refs = re.findall(r"第\s*\d+\s*章", section)
-    actual = max(len(table_rows), len(chapter_refs))
+    actual = max(count_paywall_rows(section), len(chapter_refs))
     return {
         "required": required,
         "actual": actual,
