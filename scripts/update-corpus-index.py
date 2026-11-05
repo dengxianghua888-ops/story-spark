@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from v4_quality import load_human_calibration
+from storyforge_lib import write_text
 
 
 def parse_dissection(text: str) -> dict:
@@ -266,8 +267,7 @@ def main():
         "v4_human_reviewed_at",
     ]
 
-    with index_path.open("w", encoding="utf-8") as f:
-        json.dump(idx, f, ensure_ascii=False, indent=2)
+    write_text(index_path, json.dumps(idx, ensure_ascii=False, indent=2))
 
     print(f"索引已更新: {index_path}")
     print(f"  总条目: {len(entries)}")

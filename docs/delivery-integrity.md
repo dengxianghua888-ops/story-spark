@@ -20,3 +20,7 @@ Pydantic v2.12.3 uses `FiniteFloat = Annotated[float, AllowInfNan(False)]` to se
 - License: https://github.com/pydantic/pydantic/blob/v2.12.3/LICENSE
 
 The chapter comparison and non-invention behavior follow this repository's existing delivery format and repair conventions. No external service receives manuscripts or private material.
+
+## Corpus index write safety (2026-11-05)
+
+`update-corpus-index.py` serializes the rebuilt index before using the existing same-directory atomic writer. A write or replacement failure leaves the previous index in place; temporary files are cleaned up and existing file mode is retained. This does not serialize concurrent index builders or guarantee persistence across power loss. The index is still derived from the corpus, not a backup of the source stories. `tests/test_corpus_index_atomic.py` covers replacement failure, cleanup, normal rebuild and file mode.
