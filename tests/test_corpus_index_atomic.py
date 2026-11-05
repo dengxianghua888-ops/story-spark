@@ -52,3 +52,16 @@ def test_symlink_index_updates_target_without_replacing_link(tmp_path, monkeypat
     module.main()
     assert index.is_symlink()
     assert json.loads(target.read_text(encoding='utf-8'))['_meta']['total'] == 0
+
+
+def test_index_with_extended_attributes_is_not_replaced(tmp_path, monkeypatch):
+    corpus = tmp_path / 'corpus'
+    corpus.mkdir()
+    index = corpus / '_index.json'
+    old = '{"_meta": {}, "entries": []}'
+    index.write_text(old, encoding='utf-8')
+    monkeypatch.setattr(sys, 'argv', ['update-corpus-index.py', '--corpus', str(corpus)])
+    monkeypatch.setattr(module.os, 'listxattr', lambda path: ['user.test'], raising=False)
+    with pytest.raises(OSError, match='extended attributes'):
+        module.main()
+    assert index.read_text(encoding='utf-8') == old
