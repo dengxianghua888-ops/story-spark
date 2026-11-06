@@ -134,3 +134,45 @@ def test_failed_retry_cannot_keep_prior_completed_run_status(tmp_path):
     assert manifest["status"] == "failed"
     # Preserve the prior successful snapshot, never overwrite it for a rejected attempt.
     assert snapshot.read_bytes() == prior_snapshot
+
+
+@pytest.mark.parametrize("mode", ["production", "ultra_short", "production_v6"])
+def test_unwritable_repair_report_does_not_preserve_completed_status(tmp_path, mode):
+    story, phase, fixtures, args = prepare_final(tmp_path, mode)
+    env = {"STORYFORGE_MOCK_FIXTURE_DIR": str(fixtures)}
+    assert run_storyforge(*args, env=env).returncode == 0
+    before = tree_bytes(story)
+    snapshot = story / f"runs/repair/phase{phase}.completed-snapshot.json"
+    prior_snapshot = snapshot.read_bytes()
+    report = story / f"runs/repair/phase{phase}.repair-report.json"
+    report.rename(report.with_suffix(".saved-json"))
+    report.mkdir()
+    result = run_storyforge(*args, env=env)
+    assert result.returncode == 23, result.stdout + result.stderr
+    assert tree_bytes(story) == before
+    manifest = json.loads((story / "runs/repair/run-manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    assert "repair report unavailable" in manifest["last_failure"]
+    assert "repair report unavailable" in result.stderr
+    summary = (story / "runs/repair/execution-summary.md").read_text()
+    assert f"| {phase} | failed |" in summary
+    assert snapshot.read_bytes() == prior_snapshot
+    assert report.is_dir()
+
+
+def test_unwritable_summary_does_not_suppress_repair_failure_manifest(tmp_path, monkeypatch):
+    story, _, fixtures, args = prepare_final(tmp_path, missing_table=True)
+    monkeypatch.setenv("STORYFORGE_MOCK_FIXTURE_DIR", str(fixtures))
+    real_append = storyforge.append_summary
+
+    def append(*a, **kw):
+        if a[2] == "failed":
+            raise OSError("synthetic summary write failure")
+        return real_append(*a, **kw)
+
+    monkeypatch.setattr(storyforge, "append_summary", append)
+    monkeypatch.setattr(sys, "argv", ["storyforge.py", *args])
+    assert storyforge.main() == 23
+    manifest = json.loads((story / "runs/repair/run-manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    assert "manual_review_required" in manifest["last_failure"]

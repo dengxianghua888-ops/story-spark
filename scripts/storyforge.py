@@ -448,22 +448,34 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
             return False
         write_json(run_dir / f"phase{phase}.normalizer.log", normalization)
 
+        repair_failure = ""
         try:
             from auto_repair import run_repair_pass
             repair_result = run_repair_pass(story, phase, mode)
-            write_json(run_dir / f"phase{phase}.repair-report.json", repair_result)
             if repair_result.get("status") != "ok":
-                notes = f"repair blocked: {repair_result.get('status')} {repair_result.get('blocking', [])}"
-                append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, notes)
-                update_manifest(run_dir, {"status": "failed", "last_failure": notes, "last_provider": provider, **phase_audit})
-                return False
-            if phase == phase_for_role(mode, "final"):
+                repair_failure = f"repair blocked: {repair_result.get('status')} {repair_result.get('blocking', [])}"
+            elif phase == phase_for_role(mode, "final"):
                 normalize_story(story, phase, mode, runner=args.runner, provider=provider)
         except Exception as exc:
-            write_json(run_dir / f"phase{phase}.repair-report.json", {"status": "fail", "error": str(exc)})
-            notes = f"repair failed: {exc}"
-            append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, notes)
-            update_manifest(run_dir, {"status": "failed", "last_failure": notes, "last_provider": provider, **phase_audit})
+            repair_result = {"status": "fail", "error": str(exc)}
+            repair_failure = f"repair failed: {exc}"
+        try:
+            write_json(run_dir / f"phase{phase}.repair-report.json", repair_result)
+        except Exception as exc:
+            detail = f"repair report unavailable: {exc}"
+            repair_failure = f"{repair_failure}; {detail}" if repair_failure else detail
+            eprint(detail)
+        if repair_failure:
+            # Each audit sink is independent: an unwritable report or summary
+            # must not leave a writable manifest falsely marked completed.
+            try:
+                update_manifest(run_dir, {"status": "failed", "last_failure": repair_failure, "last_provider": provider, **phase_audit})
+            except (OSError, ValueError) as exc:
+                eprint(f"Repair rejected; run manifest unavailable: {exc}")
+            try:
+                append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, repair_failure)
+            except (OSError, ValueError) as exc:
+                eprint(f"Repair rejected; execution summary unavailable: {exc}")
             return False
 
     validation = validate_phase(story, phase, require_pass=phase >= phase_for_role(mode, "critic"), mode=mode)

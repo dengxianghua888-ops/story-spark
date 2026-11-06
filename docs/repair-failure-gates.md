@@ -20,11 +20,16 @@ as `ok`. This could hide a failed repair behind a later passing validator.
 - Production, ultra-short and production V6 runs reject a non-`ok` aggregate
   before validation, further final normalization, rubric scoring or publication.
   An exception in the repair/final-normalization block also rejects the attempt.
-  The run manifest and execution summary record failure, including on a reused
-  run ID that previously completed. The existing retry policy and exhausted-run
-  exit code 23 are preserved.
-- The live story stays unchanged and the existing staging mechanism retains the
-  rejected candidate. A failed attempt does not write a completion snapshot.
+  The writable run manifest and execution summary independently record failure,
+  including on a reused run ID that previously completed. An unwritable repair
+  report cannot suppress either update. Audit-write failures are also printed to
+  stderr; no state persistence is promised for an unwritable audit destination.
+  The existing retry policy and exhausted-run exit code 23 are preserved.
+- Rejected candidate manuscript bytes are not published, and the existing staging
+  mechanism retains the candidate. The existing retry loop can still create
+  versioned manuscript backups and update `story.yaml` automation metadata, so
+  this is not a claim that the whole live directory remains byte-for-byte unchanged.
+  A failed attempt does not write a completion snapshot.
   Historical successful snapshots are retained, not replaced by failed output.
 - The standalone gate reports `repair_fail` for failed/unknown aggregates, using
   exit 26, also used for repair-requested manual review. Validator failures keep
@@ -44,7 +49,8 @@ runner. Three mode-specific subprocess cases reproduce erroneous publication on
 the old implementation. It also covers failed/exceptional/malformed repair
 results, a real passing validator behind a failed repair, standalone exit-code
 propagation, preservation of published bytes, valid publication, and a reused
-completed run ID. Fault injection is used for I/O and malformed-return cases.
+completed run ID, including a persistently unwritable repair-report path in all
+three modes. Fault injection is used for I/O and malformed-return cases.
 
 Run `python -m pytest -q`, `python -m compileall -q scripts tests`, and the
 repository's applicable static checks. No live model, copyrighted local fixture,
