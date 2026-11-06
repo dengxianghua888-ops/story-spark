@@ -452,10 +452,19 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
             from auto_repair import run_repair_pass
             repair_result = run_repair_pass(story, phase, mode)
             write_json(run_dir / f"phase{phase}.repair-report.json", repair_result)
+            if repair_result.get("status") != "ok":
+                notes = f"repair blocked: {repair_result.get('status')} {repair_result.get('blocking', [])}"
+                append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, notes)
+                update_manifest(run_dir, {"status": "failed", "last_failure": notes, "last_provider": provider, **phase_audit})
+                return False
             if phase == phase_for_role(mode, "final"):
                 normalize_story(story, phase, mode, runner=args.runner, provider=provider)
         except Exception as exc:
             write_json(run_dir / f"phase{phase}.repair-report.json", {"status": "fail", "error": str(exc)})
+            notes = f"repair failed: {exc}"
+            append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, notes)
+            update_manifest(run_dir, {"status": "failed", "last_failure": notes, "last_provider": provider, **phase_audit})
+            return False
 
     validation = validate_phase(story, phase, require_pass=phase >= phase_for_role(mode, "critic"), mode=mode)
     (run_dir / f"phase{phase}.validator.log").write_text(validation.stdout + validation.stderr, encoding="utf-8")

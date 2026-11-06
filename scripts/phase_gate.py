@@ -8,7 +8,7 @@ Exit codes mirror existing storyforge runner conventions:
 - 0: pass (all stages green)
 - 23: validator failed
 - 25: rubric failed
-- 26: repair flagged manual review
+- 26: repair failed or flagged manual review
 """
 
 from __future__ import annotations
@@ -106,6 +106,9 @@ def run_gate(story: Path, phase: int, mode: str, rubric_threshold: float, run_ru
     if repairs.get("status") == "manual_review_required":
         overall_status = "manual_review"
         failures.append(f"repair manual review: {repairs.get('blocking')}")
+    elif repairs.get("status") != "ok":
+        overall_status = "repair_fail"
+        failures.append(f"repair failed: {repairs.get('blocking')}")
     if validator.get("status") != "pass":
         overall_status = "validator_fail"
         failures.extend(validator.get("failures", []) or [])
@@ -156,7 +159,7 @@ def main() -> int:
         return 23
     if result["status"] == "rubric_fail":
         return 25
-    if result["status"] == "manual_review":
+    if result["status"] in {"manual_review", "repair_fail"}:
         return 26
     return 1
 
