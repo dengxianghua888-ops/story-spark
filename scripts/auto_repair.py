@@ -52,19 +52,26 @@ def run_repair_pass(story: Path, phase: int, mode: str = "production") -> Dict[s
             break
     results: List[Dict[str, Any]] = []
     blocking: List[str] = []
+    failed = False
     for module in repairers:
         try:
             outcome = module.run(story, mode, phase=phase) if module is repair_quality_report_sync else module.run(story, mode)
-        except Exception as exc:  # never let a repairer take down the pipeline
+            if not isinstance(outcome, dict) or outcome.get("status") not in (
+                "ok", "skipped", "manual_review_required", "fail"
+            ):
+                raise ValueError("Repairer returned an invalid status payload")
+        except Exception as exc:  # retain diagnostics, but never turn failure into success
             outcome = {"name": getattr(module, "__name__", "unknown"), "status": "fail", "reason": str(exc)}
         results.append(outcome)
-        if outcome.get("status") == "manual_review_required":
+        if outcome.get("status") in {"manual_review_required", "fail"}:
             blocking.append(outcome.get("name", "unknown"))
+        if outcome.get("status") == "fail":
+            failed = True
 
     report = {
         "phase": phase,
         "mode": mode,
-        "status": "ok" if not blocking else "manual_review_required",
+        "status": "fail" if failed else "manual_review_required" if blocking else "ok",
         "blocking": blocking,
         "results": results,
     }
