@@ -275,24 +275,84 @@ def chapter_text_consistency(text: str, chapters: List[Path]) -> Dict[str, Any]:
             "file_count": len(chapters), "mismatched_chapters": mismatches}
 
 
+def _map_cells(line: str) -> List[str]:
+    """Read a pipe-delimited map row without splitting escaped content pipes."""
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return []
+    cells = []
+    cell = []
+    escaped = False
+    for char in stripped[1:]:
+        if char == "|" and not escaped:
+            cells.append("".join(cell).strip())
+            cell = []
+        else:
+            cell.append(char)
+        escaped = char == "\\" and not escaped
+    if cell or not stripped.endswith("|"):
+        cells.append("".join(cell).strip())
+    return cells
+
+
+def _chapter_map_number(label: str) -> int | None:
+    label = label.strip()
+    match = re.fullmatch(r"(?:ch)?([0-9]+)(?:\.md)?|第\s*([0-9]+)\s*章", label, re.IGNORECASE)
+    if not match:
+        return None
+    # Avoid int's oversized-input limit on malformed model output.
+    digits = (match.group(1) or match.group(2)).lstrip("0")
+    return int(digits) if digits and len(digits) <= 9 else None
+
+
 def chapter_hook_coverage(story: Path) -> Tuple[int, int, float]:
     chapters = chapter_files(story)
+    if not chapters:
+        return 0, 0, 0.0
+    identities = Counter(_chapter_map_number(path.name) for path in chapters)
+    hooks_by_chapter: Dict[int, List[str]] = {}
     map_path = story / "final-chapters" / "_chapters-map.md"
-    hooks = 0
+    pending_columns = 0
+    active_columns = 0
+    fence = ""
+    fence_length = 0
     if map_path.exists():
         for raw in map_path.read_text(encoding="utf-8").splitlines():
             line = raw.strip()
-            if not line.startswith("|") or "---" in line or "Hook" in line or "钩" in line and "章" in line:
+            marker = re.match(r"^(`{3,}|~{3,})", line)
+            if fence:
+                if marker and marker.group(1)[0] == fence and len(marker.group(1)) >= fence_length and not line[len(marker.group(1)):].strip():
+                    fence = ""
                 continue
-            cells = [cell.strip() for cell in line.strip("|").split("|")]
-            if len(cells) < 3:
+            if marker:
+                fence, fence_length = marker.group(1)[0], len(marker.group(1))
+                pending_columns = active_columns = 0
                 continue
-            hook = cells[-1]
-            if hook and hook not in {"-", "—", "无", "none", "None"}:
-                hooks += 1
-    if not chapters:
-        return 0, 0, 0.0
-    hooks = min(hooks, len(chapters))
+            cells = _map_cells(line)
+            if not cells:
+                pending_columns = active_columns = 0
+                continue
+            # Only the documented chapter/hook table can establish coverage.
+            if (len(cells) >= 3 and cells[0].casefold() in {"章", "章节", "章号", "chapter"}
+                    and re.search(r"钩|悬念|hook", cells[-1], re.IGNORECASE)):
+                pending_columns = len(cells)
+                active_columns = 0
+                continue
+            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+                active_columns = pending_columns if len(cells) == pending_columns else 0
+                pending_columns = 0
+                continue
+            pending_columns = 0
+            if not active_columns or len(cells) != active_columns:
+                active_columns = 0
+                continue
+            number = _chapter_map_number(cells[0])
+            if number is not None and identities.get(number) == 1:
+                hooks_by_chapter.setdefault(number, []).append(cells[-1])
+    # Duplicate aliases, including conflicting empty rows, cannot certify a
+    # chapter. Unknown chapter numbers never fill a missing delivered chapter.
+    hooks = sum(len(values) == 1 and values[0].casefold() not in {"", "-", "—", "无", "none"}
+                for values in hooks_by_chapter.values())
     return hooks, len(chapters), round(hooks / len(chapters), 4)
 
 

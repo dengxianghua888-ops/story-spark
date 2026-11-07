@@ -482,7 +482,7 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
     (run_dir / f"phase{phase}.validator.log").write_text(validation.stdout + validation.stderr, encoding="utf-8")
     if validation.returncode != 0:
         append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, "validator failed")
-        update_manifest(run_dir, {"last_failure": "validator failed", "last_provider": provider, **phase_audit})
+        update_manifest(run_dir, {"status": "failed", "last_failure": "validator failed", "last_provider": provider, **phase_audit})
         return False
 
     # Tomato rubric gate runs on the current final-packager output. Failure marks
