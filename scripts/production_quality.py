@@ -332,6 +332,15 @@ def chapter_hook_coverage(story: Path) -> Tuple[int, int, float]:
             if not cells:
                 pending_columns = active_columns = 0
                 continue
+            if active_columns:
+                # A body row remains in this table even when its width differs
+                # or its text resembles a header/delimiter. Never lose later
+                # conflicts by treating one malformed row as a table boundary.
+                number = _chapter_map_number(cells[0])
+                if number is not None and identities.get(number) == 1:
+                    hook = cells[-1] if len(cells) == active_columns else ""
+                    hooks_by_chapter.setdefault(number, []).append(hook)
+                continue
             # Only the documented chapter/hook table can establish coverage.
             if (len(cells) >= 3 and cells[0].casefold() in {"章", "章节", "章号", "chapter"}
                     and re.search(r"钩|悬念|hook", cells[-1], re.IGNORECASE)):
@@ -343,12 +352,6 @@ def chapter_hook_coverage(story: Path) -> Tuple[int, int, float]:
                 pending_columns = 0
                 continue
             pending_columns = 0
-            if not active_columns or len(cells) != active_columns:
-                active_columns = 0
-                continue
-            number = _chapter_map_number(cells[0])
-            if number is not None and identities.get(number) == 1:
-                hooks_by_chapter.setdefault(number, []).append(cells[-1])
     # Duplicate aliases, including conflicting empty rows, cannot certify a
     # chapter. Unknown chapter numbers never fill a missing delivered chapter.
     hooks = sum(len(values) == 1 and values[0].casefold() not in {"", "-", "—", "无", "none"}

@@ -26,6 +26,14 @@ It also discarded legitimate rows if their prose contained `Hook`, `---`, or bot
 - Only an all-separator row is a delimiter. Hook text containing control-looking
   words or hyphens is ordinary content. Empty hooks and the existing dash,
   `无`, and case-insensitive `none` placeholders do not count.
+- Once a table starts, a short/long body row, repeated header-like text or
+  separator-like body row cannot terminate scanning and hide a later conflict.
+  A delivered chapter named by a wrong-width row is recorded with an empty hook;
+  it cannot certify that chapter or disappear from duplicate detection. Unknown
+  rows cannot certify a chapter, but do not discard subsequent valid rows.
+  Blank/non-row lines and fences still end the table. Separate tables require a
+  boundary and their own header/delimiter. This deliberately rejects ambiguous
+  widths rather than padding/truncating them into valid hook declarations.
 - A failed final-stage validator now marks its run manifest `failed`, including
   when a previously completed run ID is reused. The prior successful snapshot
   is retained, never replaced by rejected output. This change does not redefine
@@ -46,6 +54,14 @@ conflicting aliases, unrelated tables, fenced examples, valid keyword-bearing
 prose, map preservation, supported labels/header formats, placeholders, absent
 maps/chapters, numbering gaps and ambiguous file aliases.
 
+`tests/test_chapter_hook_row_boundaries.py` additionally checks ragged rows at
+the start/middle/end, header/delimiter-like body rows, three/four-column tables,
+non-row boundaries, and standalone gate plus reused-run CLI rejection in all
+three modes. Before this follow-up fix, all six CLI cases wrongly published the
+conflicting map and returned success. The regressions require rejected runs to
+preserve published bytes and the prior completion snapshot, mark their manifest
+failed, and leave the map unchanged during standalone gate evaluation.
+
 Run `python -m pytest -q`, `python -m compileall -q scripts tests` and fatal Ruff
 checks (`E9,F63,F7,F82`). These are synthetic offline regressions. No real model,
 reader, copyrighted local-only fixture or submission-platform acceptance is
@@ -61,6 +77,17 @@ no dependency was added.
 
 - Source: https://github.com/pandas-dev/pandas/blob/9c8bc3e55188c8aff37207a74f1dd144980b8874/pandas/core/reshape/merge.py#L1632-L1675
 - License: BSD-3-Clause, https://github.com/pandas-dev/pandas/blob/9c8bc3e55188c8aff37207a74f1dd144980b8874/LICENSE
+
+For table boundaries, GitHub's cmark-gfm keeps body rows in the same table even
+when their width differs from the header, padding missing cells and ignoring
+extra cells for rendering. A width mismatch is therefore not a reliable table
+boundary. This parser adopts only that boundary principle, keeping its stricter
+hook-validation policy. No upstream source/test text was copied or dependency
+added. The repository's `COPYING` has a BSD-2-Clause core license and separately
+listed MIT components and CC-BY-SA specification text; none are redistributed.
+
+- Source: https://github.com/github/cmark-gfm/blob/27d942c8b0a62d192f616e5bf3578f4b6a89e180/extensions/table.c#L428-L521
+- License: https://github.com/github/cmark-gfm/blob/27d942c8b0a62d192f616e5bf3578f4b6a89e180/COPYING
 
 The repository's existing lack of a root license remains unchanged. This
 reference grants no new redistribution rights to manuscripts or the repository.
