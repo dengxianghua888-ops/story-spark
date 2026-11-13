@@ -435,7 +435,7 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
     except (OSError, ValueError) as exc:
         append_summary(summary, phase, "failed", phase_started, int(time.time() - start), retry, args.runner, provider, f"artifact parse failed: {exc}")
         write_json(run_dir / f"phase{phase}.parse-report.json", {"phase": phase, "status": "failed", "error": str(exc)})
-        update_manifest(run_dir, phase_audit)
+        update_manifest(run_dir, {"status": "failed", "last_failure": f"artifact parse failed: {exc}", **phase_audit})
         return False
 
     if mode in {"production", "production_v6", "ultra_short"}:

@@ -525,6 +525,12 @@ FILE_BLOCK_UNCLOSED_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
+FILE_HEADER_RE = re.compile(r"^<<<FILE:\s*(?P<path>[^>\n]+?)\s*>>>\s*$", re.MULTILINE)
+
+
+class DuplicateArtifactError(ValueError):
+    """Ambiguous structured output must not fall back to another parser."""
+
 
 def _matches_output_pattern(rel: str, pattern: str) -> bool:
     return fnmatch.fnmatchcase(rel, pattern) if "*" in pattern else rel == pattern
@@ -546,6 +552,14 @@ def _missing_output_patterns(parsed_paths: set[str], allowed_patterns: set[str])
 
 
 def parse_artifact_bundle(text: str) -> Dict[str, str]:
+    # Check declarations before extraction can discard an incomplete block or
+    # dictionaries can choose one value. Match the apply path's accepted alias.
+    targets = set()
+    for header in FILE_HEADER_RE.finditer(text):
+        target = str(validate_safe_relpath(header.group("path").strip())).removeprefix("story/")
+        if target in targets:
+            raise DuplicateArtifactError(f"duplicate artifact target: {target}")
+        targets.add(target)
     files: Dict[str, str] = {}
     for match in FILE_BLOCK_RE.finditer(text):
         rel = str(validate_safe_relpath(match.group("path").strip()))

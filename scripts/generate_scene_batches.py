@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from rhythm_metrics import rhythm_profile  # noqa: E402
 from scene_context import LEDGER, context_for_batch, scene_order  # noqa: E402
-from storyforge_lib import StagedStory, story_write_lock, now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
+from storyforge_lib import FILE_HEADER_RE, StagedStory, story_write_lock, now_stamp, parse_artifact_bundle, write_json, write_text  # noqa: E402
 from repairs import repair_fragmentation_and_soft_words  # noqa: E402
 from source_policy import SourceAccessDenied, require_source_access  # noqa: E402
 from run_paths import run_directory  # noqa: E402
@@ -264,6 +264,10 @@ def write_batch_outputs(story: Path, expected: List[str], bundle_text: str) -> L
     try:
         parsed = parse_artifact_bundle(bundle_text)
     except ValueError:
+        # Invalid structured input must not be reinterpreted permissively. An
+        # earlier invalid path may have stopped parsing before later duplicates.
+        if FILE_HEADER_RE.search(bundle_text):
+            raise
         parsed = {}
         for rel in expected:
             pattern = re.compile(
