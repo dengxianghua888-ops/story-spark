@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -549,13 +550,19 @@ def generate_candidate(story, live_story, run_dir, run_id, args):
         for attempt in range(0, args.retries + 1):
             suffix = "" if attempt == 0 else f".repair{attempt}"
             attempt_prompt_path = run_dir / f"batch{index:02d}{suffix}.prompt.md"
-            attempt_out_path = run_dir / f"batch{index:02d}{suffix}.codex.out"
             attempt_log_path = run_dir / f"batch{index:02d}{suffix}.codex.log"
             write_text(attempt_prompt_path, current_prompt)
             require_source_access(live_story)
             require_source_access(story)
             check_blueprint_approval(live_story, args)
             check_blueprint_approval(story, args)
+            # Run IDs and repair numbers can be reused. Give every invocation
+            # a fresh output destination so a successful but silent process
+            # cannot accidentally publish an earlier response. Retain prior
+            # responses as evidence rather than deleting or relabelling them.
+            attempt_out_path = Path(tempfile.mkdtemp(
+                prefix=f"batch{index:02d}{suffix}.", dir=run_dir,
+            )) / "codex.out"
             completed = run_codex(current_prompt, attempt_out_path, args.model, args.effort, args.timeout)
             attempt_log_path.write_text((completed.stdout or "") + (completed.stderr or ""), encoding="utf-8")
             bundle_text = attempt_out_path.read_text(encoding="utf-8") if attempt_out_path.exists() else completed.stdout
