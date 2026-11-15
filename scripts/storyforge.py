@@ -422,6 +422,7 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
     manual_marker = run_dir / f"phase{phase}.awaiting-manual.json"
     if str(runner_result.get("failure_reason", "")).startswith("manual prompt pack generated:"):
         write_json(manual_marker, {"input": input_snapshot})
+        update_manifest(run_dir, {"status": "paused"})
     elif manual_marker.exists():
         manual_marker.unlink()
     if result.returncode != 0 or runner_result.get("status") != "success":
@@ -562,6 +563,7 @@ def _run_staged_phase(args, live_story, run_dir, summary, phase, retry, staged):
             append_summary(summary, phase, "paused", phase_started, int(time.time() - start), retry, args.runner, provider, "waiting for human gate: phase2_blueprint_review")
         except OSError as exc:
             eprint(f"Phase {phase} committed and paused; audit unavailable: {exc}")
+        finish_unsuccessful_run(run_dir, RUNNER_EXIT_HUMAN_GATE, "paused")
         return False
     return True
 
@@ -611,7 +613,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         args.run_id = now_run_id()
     run_dir = run_directory(story, args.run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
-    summary = init_summary(story, run_dir, args.run_id, args.runner, args.from_phase, args.max_retries)
     update_manifest(
         run_dir,
         {
@@ -623,9 +624,49 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             "max_retries": args.max_retries,
             "source_access": story_source_access(story),
             "started_at": now_stamp(),
+            "status": "running",
+            "ended_at": None,
+            "ended_phase": None,
+            "last_failure": None,
+            "exit_code": None,
         },
     )
 
+    try:
+        summary = init_summary(story, run_dir, args.run_id, args.runner, args.from_phase, args.max_retries)
+        result = _run_initialized_pipeline(args, story, run_dir, summary, last_phase)
+    except SourceAccessDenied as exc:
+        finish_unsuccessful_run(run_dir, 30, "blocked", str(exc))
+        raise
+    except (OSError, ValueError, ImportError) as exc:
+        finish_unsuccessful_run(run_dir, RUNNER_EXIT_VALIDATION_FAILED, "failed", str(exc))
+        raise
+    if result:
+        status = "blocked" if result == 30 else "failed"
+        if result in {RUNNER_EXIT_VALIDATION_FAILED, RUNNER_EXIT_HUMAN_GATE}:
+            # Only the current attempt can set paused; each phase/retry starts
+            # running. An old manual marker or an old completed run is not proof.
+            try:
+                if load_json(run_dir / "run-manifest.json").get("status") == "paused":
+                    status = "paused"
+            except (OSError, ValueError) as exc:
+                eprint(f"Run status unavailable while finalizing: {exc}")
+        finish_unsuccessful_run(run_dir, result, status)
+    return result
+
+
+def finish_unsuccessful_run(run_dir: Path, exit_code: int, status: str, detail: str | None = None) -> None:
+    patch = {"status": status, "exit_code": exit_code, "ended_at": now_stamp()}
+    if detail is not None:
+        patch["last_failure"] = detail
+    try:
+        update_manifest(run_dir, patch)
+    except (OSError, ValueError) as exc:
+        # A failed audit sink must not hide the original nonzero outcome.
+        eprint(f"Run exited {exit_code}; final status audit unavailable: {exc}")
+
+
+def _run_initialized_pipeline(args, story, run_dir, summary, last_phase):
     if args.dry_run:
         print(f"[DRY-RUN] StoryForge run initialized: {run_dir}")
 
@@ -635,11 +676,13 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     review_phase = phase_for_role(args.mode, "critic")
     rewrite_phase = phase_for_role(args.mode, "scene")
     while phase <= max_phase:
+        update_manifest(run_dir, {"status": "running"})
         if phase > phase_for_role(args.mode, "beat") and not args.dry_run and not args.no_human_gates and args.runner != "mock":
             try:
                 require_approval(story, run_dir, ROOT, args)
             except (OSError, ValueError) as exc:
                 eprint(str(exc))
+                finish_unsuccessful_run(run_dir, RUNNER_EXIT_HUMAN_GATE, "paused", str(exc))
                 return RUNNER_EXIT_HUMAN_GATE
         try:
             ok = run_phase(args, story, run_dir, summary, phase, retry)
@@ -653,6 +696,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             return 30
         except (OSError, ValueError) as exc:
             eprint(f"phase {phase} failed safely: {exc}")
+            finish_unsuccessful_run(run_dir, RUNNER_EXIT_VALIDATION_FAILED, "failed", str(exc))
             return RUNNER_EXIT_VALIDATION_FAILED
         if ok:
             phase += 1
@@ -728,7 +772,10 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     try:
         with summary.open("a", encoding="utf-8") as handle:
             handle.write(f"\n**Ended**: {now_stamp()}\n")
-        update_manifest(run_dir, {"status": "completed", "ended_at": now_stamp(), "ended_phase": max_phase})
+    except (OSError, ValueError) as exc:
+        eprint(f"Run committed; completion summary unavailable: {exc}")
+    try:
+        update_manifest(run_dir, {"status": "completed", "exit_code": 0, "ended_at": now_stamp(), "ended_phase": max_phase})
     except (OSError, ValueError) as exc:
         eprint(f"Run committed; completion audit unavailable: {exc}")
     print(f"StoryForge run completed: {run_dir}")
