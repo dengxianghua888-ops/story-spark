@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -260,7 +261,16 @@ def main() -> int:
                 last_data = data
                 break
         provider_started = time.time()
-        append_provider_sentinel(run_dir, args.phase, provider, "started", output_bundle=str(output_bundle))
+        attempt_args, attempt_output = args, output_bundle
+        if provider in PROVIDERS:
+            # A failed automatic response must not become a manual submission.
+            # Isolate every attempt, including repeated providers in one dispatch.
+            attempt_dir = Path(tempfile.mkdtemp(
+                prefix=f"phase{args.phase}.{provider}-", dir=run_dir.resolve()))
+            attempt_args = argparse.Namespace(**vars(args))
+            attempt_args.run_dir = str(attempt_dir)
+            attempt_output = attempt_dir / output_bundle.name
+        append_provider_sentinel(run_dir, args.phase, provider, "started", output_bundle=str(attempt_output))
         if provider == "mock":
             ok, data, log = run_mock(args, output_bundle)
         elif provider == "manual-prompt-pack":
@@ -271,7 +281,7 @@ def main() -> int:
                 data = result(args.phase, "agent", provider, "failed", 10, provider, time.time(), output_bundle, "unknown provider")
                 ok, log = False, ""
             else:
-                ok, data, log = runner(args, prompt, output_bundle)
+                ok, data, log = runner(attempt_args, prompt, attempt_output)
         attempts.append(data)
         (run_dir / f"phase{args.phase}.{provider}.provider.log").write_text(log, encoding="utf-8")
         append_provider_sentinel(
