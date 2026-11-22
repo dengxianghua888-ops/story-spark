@@ -209,7 +209,7 @@ def main():
     manifest = {}
     if manifest_path.exists():
         with manifest_path.open("r", encoding="utf-8") as f:
-            header = f.readline()
+            f.readline()  # skip header row
             for line in f:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) >= 3:

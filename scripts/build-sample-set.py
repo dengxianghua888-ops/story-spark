@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 # Import from sibling module
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
-from rhythm_metrics import rhythm_profile, count_nonspace
+from rhythm_metrics import rhythm_profile
 
 
 CORPUS_ROOT = Path(__file__).resolve().parent.parent / "corpus"

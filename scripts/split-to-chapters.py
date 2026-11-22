@@ -58,7 +58,6 @@ def split_into_chapters(text: str, target_min: int = 500, target_max: int = 800,
     chapters = []
     buf = []
     buf_chars = 0
-    last_cut_level = "A"
 
     def flush(cut_level):
         nonlocal buf, buf_chars

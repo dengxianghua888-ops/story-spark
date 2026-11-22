@@ -536,8 +536,6 @@ def generate_candidate(story, live_story, run_dir, run_id, args):
             snapshot = json.loads(context_for_batch(story, batch, max_chars=args.context_max_chars))
             write_json(run_dir / "scene-context" / f"{cards[0]['scene_id']}.json", snapshot)
         prompt_path = run_dir / f"batch{index:02d}.prompt.md"
-        out_path = run_dir / f"batch{index:02d}.codex.out"
-        log_path = run_dir / f"batch{index:02d}.codex.log"
         write_text(prompt_path, prompt)
         batch_report = {
             "batch": index,

@@ -1,3 +1,4 @@
-PyYAML>=6.0
-pytest>=8.0,<10
-ruff>=0.5
+# Exact pins keep CI reproducible; Dependabot (.github/dependabot.yml) proposes upgrades.
+PyYAML==6.0.4
+pytest==9.2.0
+ruff==0.17.6
