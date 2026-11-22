@@ -8,6 +8,15 @@ corpus/*/source.md
 # stories 所有 source.md(具体仿写项目的原文输入)
 stories/*/source.md
 
+# 原文的任何改名副本/备份/原始导入(如 source.original-*.md、*.txt)同样不得入库。
+# tests/test_repository_hygiene.py 会在 CI 中检查已跟踪文件。
+corpus/**/source.md
+corpus/**/source.*.md
+corpus/**/*.txt
+stories/**/source.md
+stories/**/source.*.md
+stories/**/*.txt
+
 # ============================================================
 # 运行时产物 / 日志
 # ============================================================
