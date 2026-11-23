@@ -395,9 +395,7 @@ python3 scripts/corpus-health.py
 
 ---
 
-## License / 原文版权
-
-`corpus/` 与 `stories/` 下的 source.md 为第三方爆款原文,仅作仿写学习 few-shot 参考,**不得分发**。`.gitignore` 已默认排除这些原文文件。
+## 补充说明
 
 ### Optional scene continuity evidence
 
@@ -412,3 +410,9 @@ improved literary quality.
 蓝图审批现在绑定候选内容、上游输入、提示词、校验规则和模型配置；变更后需要明确重审。
 `--resume` 仅复用输入一致、产物指纹一致且重新校验通过的阶段，旧 `approved` 不会自动升级为历史审批。
 分场入口也支持 `--approval-run-id`。操作示例与兼容边界见 [审批快照说明](docs/approval-snapshots.md)。
+
+## 许可与原文版权
+
+- **代码与工具**：本仓库自有的代码、提示词、模板、经验数据与文档采用 [Apache License 2.0](LICENSE)。
+- **不在许可范围内**：`corpus/`（第三方作品的拆解与分析）、`stories/`（改编稿及中间产物）、`exports/` 下的稿件与导出文档，以及其他文件中为说明问题而引用的第三方片段与标题。这些内容不授予任何许可，第三方作品的著作权归原作者所有。完整范围见 [NOTICE](NOTICE)。
+- **原文不入库**：`corpus/` 与 `stories/` 下的 `source.md` 为第三方原文，仅作仿写学习参考，**不得分发**。`.gitignore` 会排除原文及其改名副本，`tests/test_repository_hygiene.py` 会在 CI 中检查是否有原文被提交。

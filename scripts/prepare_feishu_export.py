@@ -2,7 +2,6 @@
 """Prepare final.md files for Feishu export by stripping submission metadata."""
 import re
 import os
-import sys
 
 STORIES = [
     'v6r2_01_ghost_wedding',
