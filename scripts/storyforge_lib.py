@@ -567,6 +567,17 @@ def parse_artifact_bundle(text: str) -> Dict[str, str]:
         if not content.strip():
             raise ValueError(f"artifact block is empty: {rel}")
         files[rel] = content.rstrip() + "\n"
+    if files:
+        # A declared target without its closing marker (typically a truncated
+        # response) must fail: dropping it would let a wildcard output treat
+        # the previous version of that file as stale and delete it.
+        unclosed = sorted(targets - {path.removeprefix("story/") for path in files})
+        if unclosed:
+            raise ValueError("artifact block not closed with <<<END FILE>>>: " + ", ".join(unclosed))
+    elif len(targets) > 1:
+        # The unclosed fallback below is only for a single legacy output; with
+        # several headers it would swallow the later blocks into the first file.
+        raise ValueError("artifact blocks not closed with <<<END FILE>>>: " + ", ".join(sorted(targets)))
     if not files:
         match = FILE_BLOCK_UNCLOSED_RE.search(text)
         if match:

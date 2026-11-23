@@ -12,7 +12,7 @@ pipeline.sh、workspace.yaml、context.md 与 README.md 等。
 3. exports/ 下的稿件与导出文档（exports/feishu/*.py 等脚本除外）；
 4. 上述授权范围内的文件中，为介绍、评论或说明问题而引用的第三方作品片段、标题与人物名称。
 
-第三方作品的著作权归原作者及相关权利人所有。原文输入（source.md 等）不随本仓库分发。
+第三方作品的著作权归原作者及相关权利人所有。原文输入（source.md 等）不在任何许可范围内，也不应提交到本仓库。
 
 ---
 
@@ -21,4 +21,5 @@ repository are licensed under the Apache License, Version 2.0 (see LICENSE).
 The corpus/ and stories/ directories, the manuscripts and exports under exports/
 (its scripts excepted), and any third-party excerpts, titles or character names
 quoted elsewhere are NOT licensed under it; all rights in third-party works
-remain with their respective owners.
+remain with their respective owners. Original source inputs (source.md and the
+like) are not licensed and must not be committed to this repository.

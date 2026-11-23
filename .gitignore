@@ -10,12 +10,16 @@ stories/*/source.md
 
 # 原文的任何改名副本/备份/原始导入(如 source.original-*.md、*.txt)同样不得入库。
 # tests/test_repository_hygiene.py 会在 CI 中检查已跟踪文件。
-corpus/**/source.md
-corpus/**/source.*.md
+corpus/**/[Ss]ource*.md
+corpus/**/[Ss]ource*.md[.~]*
+corpus/**/原文*
 corpus/**/*.txt
-stories/**/source.md
-stories/**/source.*.md
+stories/**/[Ss]ource*.md
+stories/**/[Ss]ource*.md[.~]*
+stories/**/原文*
 stories/**/*.txt
+# 工具写入的原文损坏说明，不是原文本身。
+!**/SOURCE_CORRUPT.md
 
 # ============================================================
 # 运行时产物 / 日志

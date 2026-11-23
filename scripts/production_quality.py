@@ -1000,6 +1000,9 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
         chapter_lengths = []
         chapter_consistency = {"status": "pass", "applicable": False}
     source_text = (story / "source.md").read_text(encoding="utf-8") if (story / "source.md").exists() else ""
+    # The overlap gate guards against copying the original. Without the original
+    # it cannot be evaluated, so it fails closed instead of reporting 0 overlap.
+    source_missing = not source_text.strip()
     overlap = max_common_substring_len(source_text, text) if source_text and text else 0
     repeated = max_repeated_substring_len(text) if text else 0
     source_rhythm = rhythm_fit(source_text, text) if source_text and text else {
@@ -1051,7 +1054,9 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
     soft_max = int(policy.get("soft_forbidden_max", 2)) if mode != "production_v6" else 12
     if sum(soft_hits.values()) > soft_max:
         failures.append(f"soft_forbidden_words: {soft_hits}")
-    if overlap > 120:
+    if source_missing:
+        failures.append("source_overlap: source.md missing or empty; overlap with the original cannot be verified")
+    elif overlap > 120:
         failures.append(f"source_overlap: max continuous overlap {overlap} exceeds 120")
     if repeated > 260:
         failures.append(f"repeated_ngram: repeated substring {repeated} exceeds 260")
@@ -1091,8 +1096,9 @@ def machine_evaluate(story: Path, phase: int, mode: str) -> Dict[str, Any]:
         },
         "direct_submission": direct_submission,
         "source_overlap": {
-            "max_continuous_overlap_chars": overlap,
-            "status": "pass" if overlap <= 120 else "fail",
+            "max_continuous_overlap_chars": None if source_missing else overlap,
+            "status": "fail" if source_missing or overlap > 120 else "pass",
+            **({"reason": "source_missing"} if source_missing else {}),
         },
         "repeated_ngram": {
             "max_repeated_substring_chars": repeated,

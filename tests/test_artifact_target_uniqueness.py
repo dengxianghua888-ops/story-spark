@@ -54,6 +54,31 @@ def test_distinct_targets_keep_existing_identity_rules(paths):
         paths[0]: "first\n", paths[1]: "second\n"}
 
 
+def test_truncated_block_after_complete_blocks_is_rejected():
+    payload = block("draft-scenes/scene-01.md", "一") + block("draft.md", "全文") + block(
+        "draft-scenes/scene-03.md", "写到一半", closed=False)
+    with pytest.raises(ValueError, match="not closed.*draft-scenes/scene-03.md"):
+        lib.parse_artifact_bundle(payload)
+
+
+def test_several_unclosed_blocks_are_not_merged_into_one_file():
+    payload = block("draft.md", "一", closed=False) + block("draft-scenes/scene-01.md", "二", closed=False)
+    with pytest.raises(ValueError, match="not closed"):
+        lib.parse_artifact_bundle(payload)
+
+
+def test_truncated_wildcard_output_keeps_the_previous_file(tmp_path):
+    story = tmp_path / "story"
+    (story / "draft-scenes").mkdir(parents=True)
+    for index in (1, 2, 3):
+        (story / "draft-scenes" / f"scene-0{index}.md").write_text(f"旧场景 {index}\n", encoding="utf-8")
+    payload = (block("draft-scenes/scene-01.md", "新 1") + block("draft-scenes/scene-02.md", "新 2")
+               + block("draft.md", "全文") + block("draft-scenes/scene-03.md", "截断", closed=False))
+    with pytest.raises(ValueError, match="not closed"):
+        lib._apply_artifact_bundle(story, 5, payload, tmp_path / "run", root=ROOT, mode="production")
+    assert (story / "draft-scenes" / "scene-03.md").read_text(encoding="utf-8") == "旧场景 3\n"
+
+
 @pytest.mark.parametrize("closed", [True, False])
 def test_single_prefixed_output_keeps_legacy_return_shape(closed):
     assert lib.parse_artifact_bundle(block("story/./draft.md", "正文。", closed=closed)) == {
