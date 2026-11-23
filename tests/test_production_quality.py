@@ -417,6 +417,18 @@ def test_production_validator_rejects_source_overlap(tmp_path):
     assert "source_overlap" in result.stderr
 
 
+def test_production_validator_fails_closed_without_source(tmp_path):
+    # source.md is gitignored, so a checkout without it must not report "no overlap".
+    story = tmp_path / "story"
+    add_common_production_artifacts(story, make_story_text(10500))
+    (story / "source.md").unlink()
+
+    result = run_script("validate-production-story.py", "--story", story, "--phase", "7", "--mode", "production")
+
+    assert result.returncode != 0
+    assert "source.md missing" in result.stderr
+
+
 def test_production_validator_rejects_empty_quality_report_metrics(tmp_path):
     story = tmp_path / "story"
     add_common_production_artifacts(story, make_story_text(10500))
