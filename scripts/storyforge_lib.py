@@ -526,6 +526,10 @@ FILE_BLOCK_UNCLOSED_RE = re.compile(
 )
 
 FILE_HEADER_RE = re.compile(r"^<<<FILE:\s*(?P<path>[^>\n]+?)\s*>>>\s*$", re.MULTILINE)
+# A reserved opener can itself be cut off before it becomes a declaration.
+FILE_HEADER_FRAGMENT_RE = re.compile(
+    r"^<<<(?:F|FI|FIL|FILE|FILE:[^\r\n]*)[ \t]*\r?$", re.MULTILINE
+)
 
 
 class DuplicateArtifactError(ValueError):
@@ -567,6 +571,7 @@ def parse_artifact_bundle(text: str) -> Dict[str, str]:
         if not content.strip():
             raise ValueError(f"artifact block is empty: {rel}")
         files[rel] = content.rstrip() + "\n"
+        last_closed_end = match.end()
     if files:
         # A declared target without its closing marker (typically a truncated
         # response) must fail: dropping it would let a wildcard output treat
@@ -574,6 +579,10 @@ def parse_artifact_bundle(text: str) -> Dict[str, str]:
         unclosed = sorted(targets - {path.removeprefix("story/") for path in files})
         if unclosed:
             raise ValueError("artifact block not closed with <<<END FILE>>>: " + ", ".join(unclosed))
+        # Inspect only the trailer after the final complete block. Text inside
+        # a closed payload and the legacy single unclosed payload stay literal.
+        if FILE_HEADER_FRAGMENT_RE.search(text, last_closed_end):
+            raise ValueError("artifact FILE header truncated after a complete block")
     elif len(targets) > 1:
         # The unclosed fallback below is only for a single legacy output; with
         # several headers it would swallow the later blocks into the first file.
